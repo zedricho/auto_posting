@@ -1,8 +1,19 @@
 """Pydantic models for Event Order data."""
 
+from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 from pydantic import BaseModel
+
+
+@dataclass
+class MatchTrace:
+    """Metadata about how a line was parsed."""
+    pattern_name: str          # "per_person", "per_unit", "flat", "hourly", "consumption", "guest_expense"
+    matched_text: str          # The raw regex match
+    extracted: dict[str, Any]  # {"pax": 1174, "price": 105.0}
+    calculation: str           # "1174 × $105.00"
+    value: float               # Computed value
 
 
 class LineItem(BaseModel):
