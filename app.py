@@ -1,6 +1,15 @@
 """Event Order Reconciliation Tool — Streamlit App."""
 
+import os
+import tempfile
+
+import pandas as pd
 import streamlit as st
+
+from recon.parser import parse_pdf
+from recon.builder import compute_totals, generate_excel
+from recon.delphi_adapter import parse_delphi_report
+from recon.reconciler import reconcile
 
 # Page config
 st.set_page_config(
@@ -73,12 +82,69 @@ def render_step_1_upload():
     st.header("Step 1: Upload & Extract")
     st.write("Upload an Event Order PDF to extract line items.")
 
-    # Placeholder - will implement in next task
-    st.info("PDF upload will be implemented in the next step.")
+    uploaded_file = st.file_uploader("Choose an EO PDF", type=["pdf"])
 
-    if st.button("Skip to Step 2 (for testing)"):
-        st.session_state.step = 2
-        st.rerun()
+    if uploaded_file is not None:
+        if st.button("Extract"):
+            with st.spinner("Extracting..."):
+                # Save to temp file for pdfplumber
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(uploaded_file.read())
+                    tmp_path = tmp.name
+
+                try:
+                    event_order = parse_pdf(tmp_path)
+                    st.session_state.event_order = event_order
+                    st.success(f"Extracted {len(event_order.line_items)} line items")
+                except Exception as e:
+                    st.error(f"Error extracting PDF: {e}")
+                    return
+                finally:
+                    os.unlink(tmp_path)
+
+    # Show extracted data if available
+    if st.session_state.event_order is not None:
+        event = st.session_state.event_order
+        st.subheader("Event Details")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("PM#", event.pm_number or "—")
+        col2.metric("BEO#", event.beo_number or "—")
+        col3.metric("Event", event.event_name or "—")
+
+        st.subheader("Line Items")
+
+        # Convert to dataframe for editing
+        items_data = []
+        for i, item in enumerate(event.line_items):
+            items_data.append({
+                "idx": i,
+                "Category": item.category,
+                "Type": item.type,
+                "Basis": item.basis,
+                "Qty/Pax": item.pax or item.qty or item.guards or "",
+                "Unit Price": item.unit_price or "",
+                "Value": item.value,
+                "Money Type": item.money_type,
+                "Needs Value": "⚠️" if item.needs_manual_value else "✓",
+            })
+
+        df = pd.DataFrame(items_data)
+
+        # Highlight rows needing manual values
+        st.dataframe(
+            df.drop(columns=["idx"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        # Count items needing values
+        needs_values = sum(1 for item in event.line_items if item.needs_manual_value)
+        if needs_values > 0:
+            st.warning(f"{needs_values} line(s) need manual values (consumption/cash)")
+
+        if st.button("Confirm Extraction →"):
+            st.session_state.step = 2
+            st.rerun()
 
 
 def render_step_2_values():
