@@ -11,13 +11,6 @@ from recon.builder import compute_totals, generate_excel
 from recon.delphi_adapter import parse_delphi_report
 from recon.reconciler import reconcile
 
-# Page config
-st.set_page_config(
-    page_title="EO Reconciliation Tool",
-    page_icon="📊",
-    layout="wide",
-)
-
 
 def check_password() -> bool:
     """Simple password authentication."""
@@ -38,11 +31,33 @@ def check_password() -> bool:
 
 
 def main():
-    st.title("📊 Event Order Reconciliation Tool")
+    st.set_page_config(
+        page_title="EO Reconciliation Tool",
+        page_icon="📊",
+        layout="wide",
+    )
 
     # Authentication
     if not check_password():
         st.stop()
+
+    # Sidebar navigation
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio(
+        "Select Page",
+        ["Reconciliation", "Parser Testing"],
+        label_visibility="collapsed",
+    )
+
+    if page == "Reconciliation":
+        render_reconciliation()
+    else:
+        render_parser_testing()
+
+
+def render_reconciliation():
+    """Main reconciliation wizard (4-step flow)."""
+    st.title("📊 Event Order Reconciliation Tool")
 
     # Initialize session state
     if "step" not in st.session_state:
@@ -75,6 +90,12 @@ def main():
         render_step_3_generate()
     elif st.session_state.step == 4:
         render_step_4_reconcile()
+
+
+def render_parser_testing():
+    """Parser testing page — placeholder for now."""
+    st.title("🔬 Parser Testing")
+    st.info("Parser testing mode coming soon...")
 
 
 def render_step_1_upload():
