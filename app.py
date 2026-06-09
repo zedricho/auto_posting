@@ -234,20 +234,80 @@ def render_step_2_values():
 def render_step_3_generate():
     """Step 3: Generate worksheet and download."""
     st.header("Step 3: Generate Worksheet")
-    st.write("Review totals and download the worksheet.")
 
-    # Placeholder
-    st.info("Worksheet generation will be implemented in the next step.")
+    if st.session_state.event_order is None:
+        st.error("No event order loaded. Go back to Step 1.")
+        if st.button("← Back to Step 1"):
+            st.session_state.step = 1
+            st.rerun()
+        return
 
+    event = st.session_state.event_order
+
+    # Compute totals
+    from recon.builder import compute_totals, generate_excel
+
+    worksheet_output = compute_totals(event)
+    st.session_state.worksheet_output = worksheet_output
+
+    # Event info
+    st.subheader("Event")
+    st.write(f"**{event.event_name}** | PM# {event.pm_number} | BEO# {event.beo_number}")
+    if event.event_date:
+        st.write(f"Date: {event.event_date}")
+
+    # Category totals table
+    st.subheader("Category Totals")
+
+    totals_data = []
+    for total in worksheet_output.totals:
+        totals_data.append({
+            "Category": total.category.replace("_", " ").title(),
+            "Delphi (incl cash)": f"${total.delphi_total:,.2f}",
+            "Opera (excl cash)": f"${total.opera_total:,.2f}",
+        })
+
+    totals_data.append({
+        "Category": "**TOTAL**",
+        "Delphi (incl cash)": f"**${worksheet_output.delphi_grand_total:,.2f}**",
+        "Opera (excl cash)": f"**${worksheet_output.opera_grand_total:,.2f}**",
+    })
+
+    st.table(pd.DataFrame(totals_data))
+
+    # Grand totals prominently
     col1, col2 = st.columns(2)
+    col1.metric("Delphi Grand Total", f"${worksheet_output.delphi_grand_total:,.2f}")
+    col2.metric("Opera Grand Total", f"${worksheet_output.opera_grand_total:,.2f}")
+
+    # Download button
+    st.divider()
+    excel_bytes = generate_excel(worksheet_output)
+
+    filename = f"worksheet_{event.beo_number or 'export'}.xlsx"
+    st.download_button(
+        label="📥 Download Worksheet (.xlsx)",
+        data=excel_bytes,
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.divider()
+
+    # Navigation
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("← Back"):
             st.session_state.step = 2
             st.rerun()
     with col2:
-        if st.button("Next →"):
+        if st.button("Proceed to Reconciliation →"):
             st.session_state.step = 4
             st.rerun()
+    with col3:
+        if st.button("✓ Done (Skip Reconciliation)"):
+            st.balloons()
+            st.success("Worksheet generated successfully!")
 
 
 def render_step_4_reconcile():
