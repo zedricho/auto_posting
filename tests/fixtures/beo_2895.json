@@ -1,0 +1,121 @@
+{
+  "pm_number": "9353",
+  "beo_number": "2895",
+  "event_name": "Ultimate Origin Lunch 2026",
+  "event_date": "2026-06-05",
+  "line_items": [
+    {
+      "category": "food",
+      "type": "Plated Meal - 3 Courses",
+      "basis": "per_person",
+      "pax": 1174,
+      "unit_price": 105.00,
+      "value": 123270.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "food",
+      "type": "AV Partners Crew Meals",
+      "basis": "per_person",
+      "pax": 4,
+      "unit_price": 49.00,
+      "value": 196.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "beverage",
+      "type": "XXXX Cartons",
+      "basis": "flat",
+      "qty": 1,
+      "unit_price": 2702.63,
+      "value": 2702.63,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "beverage",
+      "type": "Speaker & VIP Drinks (Green Room)",
+      "basis": "consumption",
+      "value": 326.00,
+      "money_type": "consumption",
+      "posts_to": "both",
+      "source": "keyed_post_event"
+    },
+    {
+      "category": "beverage",
+      "type": "Classic Beverage Package - 4.5 Hours",
+      "basis": "per_person",
+      "pax": 1174,
+      "unit_price": 63.00,
+      "value": 73962.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "beverage",
+      "type": "Basic Spirits at Guest Expense",
+      "basis": "guest_expense",
+      "value": 4848.97,
+      "money_type": "cash",
+      "posts_to": "delphi_only",
+      "source": "pos"
+    },
+    {
+      "category": "resource",
+      "type": "Labour surcharge - XXXX Cartons",
+      "basis": "flat",
+      "value": 320.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "resource",
+      "type": "Front of House Bar",
+      "basis": "per_unit",
+      "qty": 1,
+      "unit_price": 530.00,
+      "value": 530.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "resource",
+      "type": "Red Carpet",
+      "basis": "per_unit",
+      "qty": 2,
+      "unit_price": 150.00,
+      "value": 300.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "other",
+      "type": "Security - 8 guards 11:00-16:30",
+      "basis": "hourly",
+      "guards": 8,
+      "hours": 5.5,
+      "unit_price": 71.00,
+      "value": 3124.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "venue_hire",
+      "type": "Green Room Hire",
+      "basis": "flat",
+      "value": 500.00,
+      "money_type": "contracted",
+      "posts_to": "both"
+    },
+    {
+      "category": "av",
+      "type": "Audio Visual",
+      "basis": "external",
+      "value": 0.00,
+      "money_type": "external",
+      "posts_to": "none"
+    }
+  ]
+}
