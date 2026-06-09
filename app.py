@@ -150,20 +150,85 @@ def render_step_1_upload():
 def render_step_2_values():
     """Step 2: Enter consumption/cash values."""
     st.header("Step 2: Complete Values")
-    st.write("Enter values for consumption and cash lines.")
 
-    # Placeholder
-    st.info("Value entry will be implemented in the next step.")
+    if st.session_state.event_order is None:
+        st.error("No event order loaded. Go back to Step 1.")
+        if st.button("← Back to Step 1"):
+            st.session_state.step = 1
+            st.rerun()
+        return
 
+    event = st.session_state.event_order
+
+    # Find items needing manual values
+    needs_values = [
+        (i, item) for i, item in enumerate(event.line_items)
+        if item.needs_manual_value
+    ]
+
+    if not needs_values:
+        st.success("All line items have values. Proceeding to next step.")
+        st.session_state.step = 3
+        st.rerun()
+        return
+
+    st.write(f"Enter values for {len(needs_values)} line(s):")
+
+    # Create input fields for each item needing a value
+    updated = False
+    for idx, item in needs_values:
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            st.write(f"**{item.type}**")
+            st.caption(f"Category: {item.category} | Type: {item.money_type}")
+        with col2:
+            source = "POS" if item.money_type == "cash" else "Post-event"
+            st.caption(f"Source: {source}")
+        with col3:
+            new_value = st.number_input(
+                "Value ($)",
+                min_value=0.0,
+                value=item.value,
+                step=0.01,
+                key=f"value_{idx}",
+                format="%.2f",
+            )
+            if new_value != item.value:
+                event.line_items[idx].value = new_value
+                updated = True
+
+    if updated:
+        st.session_state.event_order = event
+
+    # Show running totals
+    st.divider()
+    st.subheader("Running Totals")
+
+    from recon.builder import compute_totals
+    preview = compute_totals(event)
+
+    col1, col2 = st.columns(2)
+    col1.metric("Delphi Total", f"${preview.delphi_grand_total:,.2f}")
+    col2.metric("Opera Total", f"${preview.opera_grand_total:,.2f}")
+
+    st.divider()
+
+    # Navigation
     col1, col2 = st.columns(2)
     with col1:
         if st.button("← Back"):
             st.session_state.step = 1
             st.rerun()
     with col2:
-        if st.button("Next →"):
-            st.session_state.step = 3
-            st.rerun()
+        # Check if all values are filled
+        all_filled = all(item.value > 0 for _, item in needs_values)
+        if all_filled:
+            if st.button("Values Complete →"):
+                st.session_state.step = 3
+                st.rerun()
+        else:
+            st.button("Values Complete →", disabled=True)
+            st.caption("Enter all values to continue")
 
 
 def render_step_3_generate():
