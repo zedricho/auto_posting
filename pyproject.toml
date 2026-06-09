@@ -1,0 +1,9 @@
+[project]
+name = "event-recon"
+version = "0.1.0"
+description = "Event Order Reconciliation Tool for The Star Brisbane"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
