@@ -2,7 +2,13 @@
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
+
+import pdfplumber
+
+from recon.models import LineItem, EventOrder
 
 
 @dataclass
@@ -201,3 +207,101 @@ def parse_line(line: str) -> ParsedLine | None:
 
     # No pattern matched
     return None
+
+
+# Section markers and their category mappings
+SECTION_MARKERS = {
+    "menu content": "food",
+    "beverage selection": "beverage",
+    "additional resources": "resource",
+    "security": "other",
+    "venue hire": "venue_hire",
+    "minimum spend": "venue_hire",
+    "audio visual": "av",
+}
+
+
+def _detect_section(text: str) -> str | None:
+    """Detect which section a line belongs to based on markers."""
+    text_lower = text.lower()
+    for marker, category in SECTION_MARKERS.items():
+        if marker in text_lower:
+            return category
+    return None
+
+
+def parse_pdf(pdf_path: str | Path) -> EventOrder:
+    """
+    Parse an EO PDF and extract all data.
+
+    Returns an EventOrder with extracted headers and line items.
+    Line items needing manual values are flagged with needs_manual_value=True.
+    """
+    pdf_path = Path(pdf_path)
+
+    with pdfplumber.open(pdf_path) as pdf:
+        # Extract all text
+        full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+    # Extract headers
+    headers = extract_headers(full_text)
+
+    # Parse event date if present
+    event_date = None
+    if headers["event_date"]:
+        try:
+            # Try parsing "Fri 05 Jun 2026" format
+            event_date = datetime.strptime(
+                headers["event_date"], "%a %d %b %Y"
+            ).date()
+        except ValueError:
+            pass  # Leave as None if unparseable
+
+    # Parse line items
+    line_items: list[LineItem] = []
+    current_section: str | None = None
+
+    for line in full_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Check if this line is a section header
+        detected_section = _detect_section(line)
+        if detected_section:
+            current_section = detected_section
+            continue
+
+        # Skip if we haven't found a section yet
+        if current_section is None:
+            continue
+
+        # Try to parse the line
+        parsed = parse_line(line)
+        if parsed is None:
+            continue
+
+        # Convert ParsedLine to LineItem
+        item = LineItem(
+            category=current_section,
+            type=parsed.description,
+            basis=parsed.basis,
+            pax=parsed.pax,
+            qty=parsed.qty,
+            guards=parsed.guards,
+            hours=parsed.hours,
+            unit_price=parsed.unit_price,
+            value=parsed.value,
+            money_type=parsed.money_type,
+            posts_to=parsed.posts_to,
+            needs_manual_value=parsed.needs_manual_value,
+        )
+        line_items.append(item)
+
+    return EventOrder(
+        pm_number=headers["pm_number"] or "",
+        beo_number=headers["beo_number"] or "",
+        event_name=headers["event_name"] or "",
+        event_date=event_date,
+        line_items=line_items,
+    )
