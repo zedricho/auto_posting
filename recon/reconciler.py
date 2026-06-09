@@ -1,6 +1,7 @@
 """Reconciler: compare worksheet vs Delphi posting report."""
 
 from dataclasses import dataclass
+from typing import Dict, List
 from recon.models import WorksheetOutput
 
 
@@ -65,14 +66,14 @@ def _diagnose_cause(
 
 def reconcile(
     worksheet: WorksheetOutput,
-    delphi_report: dict[str, float],
-) -> list[Discrepancy]:
+    delphi_report: Dict[str, float],
+) -> List[Discrepancy]:
     """
     Compare computed worksheet against Delphi posting report.
 
     Returns list of discrepancies (empty if all match within tolerance).
     """
-    discrepancies: list[Discrepancy] = []
+    discrepancies: List[Discrepancy] = []
 
     for total in worksheet.totals:
         expected = total.delphi_total

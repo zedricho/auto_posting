@@ -1,7 +1,7 @@
 """Adapter for parsing Delphi posting reports."""
 
 from io import BytesIO
-from typing import BinaryIO
+from typing import BinaryIO, Dict
 from openpyxl import load_workbook
 
 
@@ -24,7 +24,7 @@ def _normalize_category(name: str) -> str:
     return CATEGORY_MAPPING.get(normalized, normalized.replace(" ", "_"))
 
 
-def parse_delphi_report(file: BinaryIO) -> dict[str, float]:
+def parse_delphi_report(file: BinaryIO) -> Dict[str, float]:
     """
     Parse a Delphi posting report Excel file.
 

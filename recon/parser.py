@@ -4,11 +4,11 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import pdfplumber
 
-from recon.models import LineItem, EventOrder
+from recon.models import LineItem, EventOrder, MatchTrace
 
 
 @dataclass
@@ -17,25 +17,25 @@ class ParsedLine:
 
     description: str
     basis: Literal["per_person", "per_unit", "flat", "hourly", "consumption", "guest_expense"]
-    pax: int | None = None
-    qty: int | None = None
-    guards: int | None = None
-    hours: float | None = None
-    unit_price: float | None = None
+    pax: Optional[int] = None
+    qty: Optional[int] = None
+    guards: Optional[int] = None
+    hours: Optional[float] = None
+    unit_price: Optional[float] = None
     value: float = 0.0
     money_type: Literal["contracted", "consumption", "cash"] = "contracted"
     posts_to: Literal["both", "delphi_only"] = "both"
     needs_manual_value: bool = False
 
 
-def extract_headers(text: str) -> dict[str, str | None]:
+def extract_headers(text: str) -> Dict[str, Optional[str]]:
     """
     Extract header fields from EO text.
 
     Returns dict with keys: pm_number, beo_number, event_name, event_date
     Missing fields are None.
     """
-    headers: dict[str, str | None] = {
+    headers: Dict[str, Optional[str]] = {
         "pm_number": None,
         "beo_number": None,
         "event_name": None,
@@ -80,7 +80,7 @@ def _parse_time_to_hours(start: str, end: str) -> float:
     return (end_mins - start_mins) / 60
 
 
-def parse_line(line: str) -> ParsedLine | None:
+def parse_line(line: str) -> Optional[ParsedLine]:
     """
     Parse a single line from an EO and extract pricing information.
 
@@ -209,6 +209,200 @@ def parse_line(line: str) -> ParsedLine | None:
     return None
 
 
+def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
+    """
+    Parse a single line from an EO and extract pricing information with trace metadata.
+
+    Returns tuple of (ParsedLine, MatchTrace) if a known pattern is matched, None otherwise.
+    """
+    line_lower = line.lower()
+
+    # Check for consumption (no price, needs manual entry)
+    if "on consumption" in line_lower:
+        desc = re.sub(r"\s*on consumption\s*", "", line, flags=re.IGNORECASE).strip()
+        parsed = ParsedLine(
+            description=desc,
+            basis="consumption",
+            value=0.0,
+            money_type="consumption",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="consumption",
+            matched_text=line.strip(),
+            extracted={},
+            calculation="Manual entry required",
+            value=0.0,
+        )
+        return (parsed, trace)
+
+    # Check for guest expense / cash (no price, needs manual entry)
+    if "at guest expense" in line_lower:
+        desc = re.sub(r"\s*at guest expense\s*", "", line, flags=re.IGNORECASE).strip()
+        parsed = ParsedLine(
+            description=desc,
+            basis="guest_expense",
+            value=0.0,
+            money_type="cash",
+            posts_to="delphi_only",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="guest_expense",
+            matched_text=line.strip(),
+            extracted={},
+            calculation="Manual entry required",
+            value=0.0,
+        )
+        return (parsed, trace)
+
+    # Security pattern: N Guards from HH:MM - HH:MM @ $X Per Hour
+    security_match = re.search(
+        r"(\d+)\s*Guards?\s*(?:from\s*)?(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s*@\s*\$?([\d,]+\.?\d*)\s*Per\s*Hour",
+        line,
+        re.IGNORECASE,
+    )
+    if security_match:
+        guards = int(security_match.group(1))
+        hours = _parse_time_to_hours(security_match.group(2), security_match.group(3))
+        rate = _parse_price(security_match.group(4))
+        value = round(guards * hours * rate, 2)
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="hourly",
+            guards=guards,
+            hours=hours,
+            unit_price=rate,
+            value=value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="hourly",
+            matched_text=security_match.group(0),
+            extracted={"guards": guards, "hours": hours, "rate": rate},
+            calculation=f"{guards} × {hours} × ${rate:.2f}",
+            value=value,
+        )
+        return (parsed, trace)
+
+    # Per person pattern: N Pax @ $X (Per Person)
+    pax_match = re.search(
+        r"(\d+)\s*Pax\s*@\s*\$?([\d,]+\.?\d*)",
+        line,
+        re.IGNORECASE,
+    )
+    if pax_match:
+        pax = int(pax_match.group(1))
+        price = _parse_price(pax_match.group(2))
+        value = round(pax * price, 2)
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="per_person",
+            pax=pax,
+            unit_price=price,
+            value=value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="per_person",
+            matched_text=pax_match.group(0),
+            extracted={"pax": pax, "price": price},
+            calculation=f"{pax} × ${price:.2f}",
+            value=value,
+        )
+        return (parsed, trace)
+
+    # Flat "For This Event" pattern: @ $X For This Event
+    flat_event_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*For This Event",
+        line,
+        re.IGNORECASE,
+    )
+    if flat_event_match:
+        price = _parse_price(flat_event_match.group(1))
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="flat",
+            value=price,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="flat",
+            matched_text=flat_event_match.group(0),
+            extracted={"price": price},
+            calculation=f"${price:,.2f} flat",
+            value=price,
+        )
+        return (parsed, trace)
+
+    # Per unit pattern: N @ $X Per [unit]
+    per_unit_match = re.search(
+        r"(\d+)\s*@\s*\$?([\d,]+\.?\d*)\s*Per\s+\w+",
+        line,
+        re.IGNORECASE,
+    )
+    if per_unit_match:
+        qty = int(per_unit_match.group(1))
+        price = _parse_price(per_unit_match.group(2))
+        value = round(qty * price, 2)
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="per_unit",
+            qty=qty,
+            unit_price=price,
+            value=value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="per_unit",
+            matched_text=per_unit_match.group(0),
+            extracted={"qty": qty, "price": price},
+            calculation=f"{qty} × ${price:.2f}",
+            value=value,
+        )
+        return (parsed, trace)
+
+    # Flat single item pattern: 1 @ $X (no "Per" or "For This Event")
+    flat_single_match = re.search(
+        r"(\d+)\s*@\s*\$?([\d,]+\.?\d*)(?:\s|$)",
+        line,
+    )
+    if flat_single_match:
+        qty = int(flat_single_match.group(1))
+        price = _parse_price(flat_single_match.group(2))
+        value = round(qty * price, 2)
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="flat",
+            qty=qty,
+            unit_price=price,
+            value=value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="flat",
+            matched_text=flat_single_match.group(0),
+            extracted={"qty": qty, "price": price},
+            calculation=f"{qty} × ${price:.2f}",
+            value=value,
+        )
+        return (parsed, trace)
+
+    # No pattern matched
+    return None
+
+
 # Section markers and their category mappings
 SECTION_MARKERS = {
     "menu content": "food",
@@ -221,7 +415,7 @@ SECTION_MARKERS = {
 }
 
 
-def _detect_section(text: str) -> str | None:
+def _detect_section(text: str) -> Optional[str]:
     """Detect which section a line belongs to based on markers."""
     text_lower = text.lower()
     for marker, category in SECTION_MARKERS.items():
@@ -230,7 +424,7 @@ def _detect_section(text: str) -> str | None:
     return None
 
 
-def parse_pdf(pdf_path: str | Path) -> EventOrder:
+def parse_pdf(pdf_path: Union[str, Path]) -> EventOrder:
     """
     Parse an EO PDF and extract all data.
 
@@ -258,8 +452,8 @@ def parse_pdf(pdf_path: str | Path) -> EventOrder:
             pass  # Leave as None if unparseable
 
     # Parse line items
-    line_items: list[LineItem] = []
-    current_section: str | None = None
+    line_items: List[LineItem] = []
+    current_section: Optional[str] = None
 
     for line in full_text.split("\n"):
         line = line.strip()
