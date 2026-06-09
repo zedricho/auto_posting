@@ -313,20 +313,99 @@ def render_step_3_generate():
 def render_step_4_reconcile():
     """Step 4: Upload Delphi report and reconcile."""
     st.header("Step 4: Reconcile")
-    st.write("Upload Delphi posting report and compare.")
 
-    # Placeholder
-    st.info("Reconciliation will be implemented in the next step.")
+    if st.session_state.worksheet_output is None:
+        st.error("No worksheet generated. Go back to Step 3.")
+        if st.button("← Back to Step 3"):
+            st.session_state.step = 3
+            st.rerun()
+        return
 
-    if st.button("← Back"):
-        st.session_state.step = 3
-        st.rerun()
+    worksheet = st.session_state.worksheet_output
 
-    if st.button("Start Over"):
-        for key in list(st.session_state.keys()):
-            if key != "authenticated":
-                del st.session_state[key]
-        st.rerun()
+    st.write("Upload the Delphi posting report to compare against computed totals.")
+
+    uploaded_file = st.file_uploader("Choose Delphi Report (.xlsx)", type=["xlsx"])
+
+    if uploaded_file is not None:
+        if st.button("Reconcile"):
+            with st.spinner("Reconciling..."):
+                from io import BytesIO
+                from recon.delphi_adapter import parse_delphi_report
+                from recon.reconciler import reconcile
+
+                try:
+                    delphi_report = parse_delphi_report(BytesIO(uploaded_file.read()))
+                    discrepancies = reconcile(worksheet, delphi_report)
+                    st.session_state.discrepancies = discrepancies
+                    st.session_state.delphi_report = delphi_report
+                except Exception as e:
+                    st.error(f"Error parsing Delphi report: {e}")
+                    return
+
+    # Show results if available
+    if "discrepancies" in st.session_state:
+        discrepancies = st.session_state.discrepancies
+        delphi_report = st.session_state.delphi_report
+
+        st.divider()
+        st.subheader("Reconciliation Results")
+
+        if not discrepancies:
+            st.success("✅ All categories match within tolerance!")
+        else:
+            st.warning(f"⚠️ {len(discrepancies)} discrepancy/ies found")
+
+        # Build comparison table
+        comparison_data = []
+        for total in worksheet.totals:
+            posted = delphi_report.get(total.category, 0.0)
+            variance = posted - total.delphi_total
+
+            # Determine status
+            if abs(variance) <= 0.05:
+                status = "✅ Match"
+                cause = "—"
+            else:
+                status = "❌ Variance"
+                disc = next((d for d in discrepancies if d.category == total.category), None)
+                cause = disc.likely_cause if disc else "Unknown"
+
+            comparison_data.append({
+                "Category": total.category.replace("_", " ").title(),
+                "Expected": f"${total.delphi_total:,.2f}",
+                "Posted": f"${posted:,.2f}",
+                "Variance": f"${variance:,.2f}",
+                "Status": status,
+                "Likely Cause": cause,
+            })
+
+        st.table(pd.DataFrame(comparison_data))
+
+        # Discrepancy details
+        if discrepancies:
+            st.subheader("Discrepancy Details")
+            for disc in discrepancies:
+                with st.expander(f"🔴 {disc.category.replace('_', ' ').title()}: ${abs(disc.variance):,.2f} variance"):
+                    st.write(f"**Expected:** ${disc.expected:,.2f}")
+                    st.write(f"**Posted:** ${disc.posted:,.2f}")
+                    st.write(f"**Variance:** ${disc.variance:,.2f}")
+                    st.write(f"**Likely Cause:** {disc.likely_cause}")
+
+    st.divider()
+
+    # Navigation
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("← Back"):
+            st.session_state.step = 3
+            st.rerun()
+    with col2:
+        if st.button("🔄 Start Over"):
+            for key in list(st.session_state.keys()):
+                if key != "authenticated":
+                    del st.session_state[key]
+            st.rerun()
 
 
 if __name__ == "__main__":
