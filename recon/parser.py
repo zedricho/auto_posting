@@ -639,6 +639,7 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
     matched_lines: List[Tuple[str, ParsedLine, MatchTrace]] = []
     unmatched_lines: List[str] = []
     current_section: Optional[str] = None
+    context_line: Optional[str] = None  # Previous non-pricing line for context
 
     for line in full_text.split("\n"):
         line = line.strip()
@@ -649,6 +650,7 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
         detected_section = _detect_section(line)
         if detected_section:
             current_section = detected_section
+            context_line = None  # Reset context on new section
             continue
 
         # Skip if we haven't found a section yet
@@ -659,10 +661,16 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
         result = parse_line_with_trace(line)
         if result is not None:
             parsed, trace = result
+
+            # For standalone patterns, use context from previous line
+            item_type = parsed.description
+            if parsed.needs_manual_value and context_line:
+                item_type = f"{context_line}: {line}"
+
             # Convert ParsedLine to LineItem
             item = LineItem(
                 category=current_section,
-                type=parsed.description,
+                type=item_type,
                 basis=parsed.basis,
                 pax=parsed.pax,
                 qty=parsed.qty,
@@ -676,9 +684,14 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
             )
             line_items.append(item)
             matched_lines.append((line, parsed, trace))
+            context_line = None  # Reset context after using it
         elif _looks_like_pricing(line):
             # Line looks like it might be pricing but didn't match
             unmatched_lines.append(line)
+            context_line = None  # Reset context
+        else:
+            # Non-pricing line - save as context for next pricing line
+            context_line = line
 
     event_order = EventOrder(
         pm_number=headers["pm_number"] or "",

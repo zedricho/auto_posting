@@ -360,17 +360,47 @@ def render_step_2_values():
             source = "POS" if item.money_type == "cash" else "Post-event"
             st.caption(f"Source: {source}")
         with col3:
-            new_value = st.number_input(
-                "Value ($)",
-                min_value=0.0,
-                value=item.value,
-                step=0.01,
-                key=f"value_{idx}",
-                format="%.2f",
-            )
-            if new_value != item.value:
-                event.line_items[idx].value = new_value
-                updated = True
+            # If we know the unit price, ask for quantity instead of total value
+            if item.unit_price and item.unit_price > 0:
+                # Determine what quantity to ask for based on basis
+                if item.basis == "hourly":
+                    qty_label = "Total hours"
+                    qty_step = 0.5
+                else:
+                    qty_label = "Quantity"
+                    qty_step = 1.0
+
+                st.caption(f"@ ${item.unit_price:,.2f} each")
+                qty = st.number_input(
+                    qty_label,
+                    min_value=0.0,
+                    value=0.0,
+                    step=qty_step,
+                    key=f"qty_{idx}",
+                    format="%.1f" if item.basis == "hourly" else "%.0f",
+                )
+                new_value = round(qty * item.unit_price, 2)
+                if new_value != item.value:
+                    event.line_items[idx].value = new_value
+                    if item.basis == "hourly":
+                        event.line_items[idx].hours = qty
+                    else:
+                        event.line_items[idx].qty = int(qty) if qty > 0 else None
+                    updated = True
+                st.caption(f"= ${new_value:,.2f}")
+            else:
+                # No unit price known - ask for total value directly
+                new_value = st.number_input(
+                    "Value ($)",
+                    min_value=0.0,
+                    value=item.value,
+                    step=0.01,
+                    key=f"value_{idx}",
+                    format="%.2f",
+                )
+                if new_value != item.value:
+                    event.line_items[idx].value = new_value
+                    updated = True
 
     if updated:
         st.session_state.event_order = event
