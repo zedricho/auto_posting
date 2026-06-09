@@ -111,3 +111,29 @@ def test_parse_result_dataclass():
     assert result.event_order.beo_number == "2895"
     assert result.matched_lines == []
     assert result.unmatched_lines == []
+
+
+def test_parse_line_standalone_hourly_rate():
+    """Standalone hourly rate (no guards/hours) returns trace with needs_manual_value."""
+    result = parse_line_with_trace("@ $71.00 Per Hour")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "hourly_rate_only"
+    assert trace.extracted["rate"] == 71.0
+    assert "needs manual entry" in trace.calculation
+    assert parsed.needs_manual_value is True
+    assert parsed.unit_price == 71.0
+
+
+def test_parse_line_standalone_per_unit():
+    """Standalone per-unit price (no qty) returns trace with needs_manual_value."""
+    result = parse_line_with_trace("@ $150.00 Per 8m piece")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "per_unit_rate_only"
+    assert trace.extracted["price"] == 150.0
+    assert "needs manual entry" in trace.calculation
+    assert parsed.needs_manual_value is True
+    assert parsed.unit_price == 150.0

@@ -213,6 +213,42 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             posts_to="both",
         )
 
+    # Standalone hourly rate: @ $X Per Hour (needs manual hours/guards entry)
+    standalone_hourly_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Per\s*Hour",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_hourly_match:
+        rate = _parse_price(standalone_hourly_match.group(1))
+        return ParsedLine(
+            description=line.strip(),
+            basis="hourly",
+            unit_price=rate,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+
+    # Standalone per-unit price: @ $X Per [unit] (needs manual qty entry)
+    standalone_per_unit_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Per\s+\w+",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_per_unit_match:
+        price = _parse_price(standalone_per_unit_match.group(1))
+        return ParsedLine(
+            description=line.strip(),
+            basis="per_unit",
+            unit_price=price,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+
     # No pattern matched
     return None
 
@@ -404,6 +440,58 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
             extracted={"qty": qty, "price": price},
             calculation=f"{qty} × ${price:.2f}",
             value=value,
+        )
+        return (parsed, trace)
+
+    # Standalone hourly rate: @ $X Per Hour (needs manual hours/guards entry)
+    standalone_hourly_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Per\s*Hour",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_hourly_match:
+        rate = _parse_price(standalone_hourly_match.group(1))
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="hourly",
+            unit_price=rate,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="hourly_rate_only",
+            matched_text=standalone_hourly_match.group(0),
+            extracted={"rate": rate},
+            calculation=f"${rate:.2f}/hour × ? hours (needs manual entry)",
+            value=0.0,
+        )
+        return (parsed, trace)
+
+    # Standalone per-unit price: @ $X Per [unit] (needs manual qty entry)
+    standalone_per_unit_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Per\s+\w+",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_per_unit_match:
+        price = _parse_price(standalone_per_unit_match.group(1))
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="per_unit",
+            unit_price=price,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="per_unit_rate_only",
+            matched_text=standalone_per_unit_match.group(0),
+            extracted={"price": price},
+            calculation=f"${price:.2f} × ? qty (needs manual entry)",
+            value=0.0,
         )
         return (parsed, trace)
 

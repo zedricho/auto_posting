@@ -395,15 +395,10 @@ def render_step_2_values():
             st.session_state.step = 1
             st.rerun()
     with col2:
-        # Check if all values are filled
-        all_filled = all(item.value > 0 for _, item in needs_values)
-        if all_filled:
-            if st.button("Values Complete →"):
-                st.session_state.step = 3
-                st.rerun()
-        else:
-            st.button("Values Complete →", disabled=True)
-            st.caption("Enter all values to continue")
+        # Allow proceeding - $0 is valid for consumption that didn't happen
+        if st.button("Values Complete →"):
+            st.session_state.step = 3
+            st.rerun()
 
 
 def render_step_3_generate():
