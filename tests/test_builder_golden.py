@@ -12,7 +12,7 @@ def beo_2895() -> EventOrder:
     """Load the golden fixture."""
     fixture_path = Path(__file__).parent / "fixtures" / "beo_2895.json"
     data = json.loads(fixture_path.read_text())
-    return EventOrder.model_validate(data)
+    return EventOrder.parse_obj(data)
 
 
 class TestGoldenBEO2895:
