@@ -87,3 +87,27 @@ def test_parse_line_no_match_returns_none():
     """Lines with no pattern match return None."""
     result = parse_line_with_trace("Some random text without pricing")
     assert result is None
+
+
+def test_parse_result_dataclass():
+    """ParseResult dataclass can be instantiated."""
+    from recon.models import EventOrder, MatchTrace
+    from recon.parser import ParsedLine, ParseResult
+
+    event = EventOrder(
+        pm_number="9353",
+        beo_number="2895",
+        event_name="Test Event",
+        event_date=None,
+        line_items=[],
+    )
+
+    result = ParseResult(
+        event_order=event,
+        matched_lines=[],
+        unmatched_lines=[],
+    )
+
+    assert result.event_order.beo_number == "2895"
+    assert result.matched_lines == []
+    assert result.unmatched_lines == []

@@ -28,6 +28,14 @@ class ParsedLine:
     needs_manual_value: bool = False
 
 
+@dataclass
+class ParseResult:
+    """Full parse result with traces for debugging."""
+    event_order: EventOrder
+    matched_lines: List[Tuple[str, ParsedLine, MatchTrace]]  # (raw_text, parsed, trace)
+    unmatched_lines: List[str]  # Lines that looked like pricing but didn't match
+
+
 def extract_headers(text: str) -> Dict[str, Optional[str]]:
     """
     Extract header fields from EO text.
@@ -498,4 +506,102 @@ def parse_pdf(pdf_path: Union[str, Path]) -> EventOrder:
         event_name=headers["event_name"] or "",
         event_date=event_date,
         line_items=line_items,
+    )
+
+
+# Keywords that suggest a line might be pricing-related
+PRICING_KEYWORDS = ["$", "@", "pax", "per ", "consumption", "expense", "hire", "fee"]
+
+
+def _looks_like_pricing(line: str) -> bool:
+    """Check if a line looks like it might contain pricing info."""
+    line_lower = line.lower()
+    return any(kw in line_lower for kw in PRICING_KEYWORDS)
+
+
+def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
+    """
+    Parse an EO PDF and return detailed trace information.
+
+    Returns ParseResult with:
+    - event_order: The parsed EventOrder
+    - matched_lines: List of (raw_text, ParsedLine, MatchTrace) tuples
+    - unmatched_lines: Lines that look like pricing but didn't match any pattern
+    """
+    pdf_path = Path(pdf_path)
+
+    with pdfplumber.open(pdf_path) as pdf:
+        full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+    # Extract headers
+    headers = extract_headers(full_text)
+
+    # Parse event date if present
+    event_date = None
+    if headers["event_date"]:
+        try:
+            event_date = datetime.strptime(
+                headers["event_date"], "%a %d %b %Y"
+            ).date()
+        except ValueError:
+            pass
+
+    # Parse line items with traces
+    line_items: List[LineItem] = []
+    matched_lines: List[Tuple[str, ParsedLine, MatchTrace]] = []
+    unmatched_lines: List[str] = []
+    current_section: Optional[str] = None
+
+    for line in full_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+
+        # Check if this line is a section header
+        detected_section = _detect_section(line)
+        if detected_section:
+            current_section = detected_section
+            continue
+
+        # Skip if we haven't found a section yet
+        if current_section is None:
+            continue
+
+        # Try to parse the line with trace
+        result = parse_line_with_trace(line)
+        if result is not None:
+            parsed, trace = result
+            # Convert ParsedLine to LineItem
+            item = LineItem(
+                category=current_section,
+                type=parsed.description,
+                basis=parsed.basis,
+                pax=parsed.pax,
+                qty=parsed.qty,
+                guards=parsed.guards,
+                hours=parsed.hours,
+                unit_price=parsed.unit_price,
+                value=parsed.value,
+                money_type=parsed.money_type,
+                posts_to=parsed.posts_to,
+                needs_manual_value=parsed.needs_manual_value,
+            )
+            line_items.append(item)
+            matched_lines.append((line, parsed, trace))
+        elif _looks_like_pricing(line):
+            # Line looks like it might be pricing but didn't match
+            unmatched_lines.append(line)
+
+    event_order = EventOrder(
+        pm_number=headers["pm_number"] or "",
+        beo_number=headers["beo_number"] or "",
+        event_name=headers["event_name"] or "",
+        event_date=event_date,
+        line_items=line_items,
+    )
+
+    return ParseResult(
+        event_order=event_order,
+        matched_lines=matched_lines,
+        unmatched_lines=unmatched_lines,
     )
