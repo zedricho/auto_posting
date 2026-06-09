@@ -2,14 +2,17 @@
 
 import os
 import tempfile
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
-from recon.parser import parse_pdf
+from recon.parser import parse_pdf, parse_pdf_with_traces, ParseResult
 from recon.builder import compute_totals, generate_excel
 from recon.delphi_adapter import parse_delphi_report
 from recon.reconciler import reconcile
+from recon.feedback import FeedbackEntry, FeedbackLog, export_feedback_json
+from recon.models import MatchTrace
 
 
 def check_password() -> bool:
@@ -93,9 +96,160 @@ def render_reconciliation():
 
 
 def render_parser_testing():
-    """Parser testing page — placeholder for now."""
+    """Parser testing page for refining extraction patterns."""
     st.title("🔬 Parser Testing")
-    st.info("Parser testing mode coming soon...")
+    st.write("Upload EO PDFs to see detailed extraction traces and provide feedback.")
+
+    # Initialize parser testing session state
+    if "pt_result" not in st.session_state:
+        st.session_state.pt_result = None
+    if "pt_pdf_name" not in st.session_state:
+        st.session_state.pt_pdf_name = None
+    if "pt_feedback_log" not in st.session_state:
+        st.session_state.pt_feedback_log = FeedbackLog()
+    if "pt_notes" not in st.session_state:
+        st.session_state.pt_notes = {}
+
+    # Show feedback log status
+    log = st.session_state.pt_feedback_log
+    if log.entries:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown(f"**Feedback Log:** {len(log.entries)} entries")
+        st.sidebar.markdown(f"PDFs: {', '.join(log.get_pdf_names())}")
+
+    # Upload section
+    st.subheader("1. Upload PDF")
+    uploaded_file = st.file_uploader("Choose an EO PDF", type=["pdf"], key="pt_uploader")
+
+    if uploaded_file is not None:
+        if st.button("Extract with Traces"):
+            with st.spinner("Extracting..."):
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                    tmp.write(uploaded_file.read())
+                    tmp_path = tmp.name
+
+                try:
+                    result = parse_pdf_with_traces(tmp_path)
+                    st.session_state.pt_result = result
+                    st.session_state.pt_pdf_name = uploaded_file.name
+                    st.session_state.pt_notes = {}  # Reset notes for new PDF
+                    st.success(f"Extracted {len(result.matched_lines)} matched lines, {len(result.unmatched_lines)} unmatched")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    os.unlink(tmp_path)
+
+    # Show results if available
+    if st.session_state.pt_result is not None:
+        result = st.session_state.pt_result
+        pdf_name = st.session_state.pt_pdf_name
+
+        # Event info
+        st.divider()
+        event = result.event_order
+        st.subheader("Event Details")
+        cols = st.columns(3)
+        cols[0].metric("PM#", event.pm_number or "—")
+        cols[1].metric("BEO#", event.beo_number or "—")
+        cols[2].metric("Event", event.event_name or "—")
+
+        # Matched lines table
+        st.divider()
+        st.subheader(f"2. Matched Lines ({len(result.matched_lines)})")
+
+        for i, (raw_text, parsed, trace) in enumerate(result.matched_lines):
+            with st.expander(f"**{parsed.description[:60]}...**" if len(parsed.description) > 60 else f"**{parsed.description}**"):
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.markdown(f"**Pattern:** `{trace.pattern_name}`")
+                    st.markdown(f"**Matched:** `{trace.matched_text}`")
+                    st.markdown(f"**Extracted:** `{trace.extracted}`")
+                    st.markdown(f"**Calculation:** {trace.calculation}")
+                    st.markdown(f"**Value:** ${trace.value:,.2f}")
+                    st.markdown(f"**Category:** {parsed.description}")
+                with col2:
+                    note_key = f"matched_{i}"
+                    note = st.text_area(
+                        "Feedback note",
+                        value=st.session_state.pt_notes.get(note_key, ""),
+                        key=f"note_{note_key}",
+                        height=100,
+                    )
+                    st.session_state.pt_notes[note_key] = note
+
+        # Unmatched lines
+        if result.unmatched_lines:
+            st.divider()
+            st.subheader(f"3. Unmatched Lines ({len(result.unmatched_lines)})")
+            st.warning("These lines look like they might contain pricing but didn't match any pattern.")
+
+            for i, line in enumerate(result.unmatched_lines):
+                with st.expander(f"**{line[:60]}...**" if len(line) > 60 else f"**{line}**"):
+                    st.code(line)
+                    note_key = f"unmatched_{i}"
+                    note = st.text_area(
+                        "What should this be?",
+                        value=st.session_state.pt_notes.get(note_key, ""),
+                        key=f"note_{note_key}",
+                        height=100,
+                    )
+                    st.session_state.pt_notes[note_key] = note
+
+        # Actions
+        st.divider()
+        st.subheader("4. Actions")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("Add to Feedback Log"):
+                # Add matched lines with notes
+                for i, (raw_text, parsed, trace) in enumerate(result.matched_lines):
+                    note = st.session_state.pt_notes.get(f"matched_{i}", "")
+                    if note:  # Only add if there's a note
+                        entry = FeedbackEntry(
+                            pdf_name=pdf_name,
+                            line_text=raw_text,
+                            match_trace=trace,
+                            category=parsed.basis,
+                            note=note,
+                            timestamp=datetime.now().isoformat(),
+                        )
+                        log.add(entry)
+
+                # Add unmatched lines with notes
+                for i, line in enumerate(result.unmatched_lines):
+                    note = st.session_state.pt_notes.get(f"unmatched_{i}", "")
+                    if note:  # Only add if there's a note
+                        entry = FeedbackEntry(
+                            pdf_name=pdf_name,
+                            line_text=line,
+                            match_trace=None,
+                            category=None,
+                            note=note,
+                            timestamp=datetime.now().isoformat(),
+                        )
+                        log.add(entry)
+
+                st.success(f"Added to log. Total entries: {len(log.entries)}")
+                st.rerun()
+
+        with col2:
+            if log.entries:
+                json_data = export_feedback_json(log)
+                st.download_button(
+                    f"Download Feedback ({len(log.entries)} entries)",
+                    data=json_data,
+                    file_name=f"parser_feedback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                )
+
+        with col3:
+            if log.entries:
+                if st.button("Clear Log"):
+                    log.clear()
+                    st.success("Log cleared")
+                    st.rerun()
 
 
 def render_step_1_upload():
