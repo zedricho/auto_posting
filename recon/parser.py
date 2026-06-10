@@ -96,6 +96,31 @@ def parse_line(line: str) -> Optional[ParsedLine]:
     """
     line_lower = line.lower()
 
+    # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
+    # GTD column is NOT a multiplier - it's just guest count
+    schedule_rental_match = re.search(
+        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$(\d+\.?\d*)\s*$",
+        line,
+    )
+    if schedule_rental_match:
+        price = _parse_price(schedule_rental_match.group(4))
+        # Only match if price is non-zero (skip $.00 rows)
+        if price > 0:
+            function_name = schedule_rental_match.group(3).strip()
+            # Clean up function name - remove venue/setup info that comes after
+            # Look for common venue names and truncate there
+            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference"]:
+                if venue_marker in function_name:
+                    function_name = function_name.split(venue_marker)[0].strip()
+                    break
+            return ParsedLine(
+                description=f"{function_name} (Venue Rental)",
+                basis="flat",
+                value=price,
+                money_type="contracted",
+                posts_to="both",
+            )
+
     # Check for consumption (no price, needs manual entry)
     if "on consumption" in line_lower:
         desc = re.sub(r"\s*on consumption\s*", "", line, flags=re.IGNORECASE).strip()
@@ -260,6 +285,38 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
     Returns tuple of (ParsedLine, MatchTrace) if a known pattern is matched, None otherwise.
     """
     line_lower = line.lower()
+
+    # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
+    # GTD column is NOT a multiplier - it's just guest count
+    schedule_rental_match = re.search(
+        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$(\d+\.?\d*)\s*$",
+        line,
+    )
+    if schedule_rental_match:
+        price = _parse_price(schedule_rental_match.group(4))
+        # Only match if price is non-zero (skip $.00 rows)
+        if price > 0:
+            function_name = schedule_rental_match.group(3).strip()
+            # Clean up function name - remove venue/setup info that comes after
+            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference"]:
+                if venue_marker in function_name:
+                    function_name = function_name.split(venue_marker)[0].strip()
+                    break
+            parsed = ParsedLine(
+                description=f"{function_name} (Venue Rental)",
+                basis="flat",
+                value=price,
+                money_type="contracted",
+                posts_to="both",
+            )
+            trace = MatchTrace(
+                pattern_name="schedule_rental",
+                matched_text=line.strip(),
+                extracted={"function": function_name, "price": price},
+                calculation=f"${price:,.2f} flat (venue rental)",
+                value=price,
+            )
+            return (parsed, trace)
 
     # Check for consumption (no price, needs manual entry)
     if "on consumption" in line_lower:

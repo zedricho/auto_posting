@@ -137,3 +137,29 @@ def test_parse_line_standalone_per_unit():
     assert "needs manual entry" in trace.calculation
     assert parsed.needs_manual_value is True
     assert parsed.unit_price == 150.0
+
+
+def test_parse_line_schedule_rental():
+    """Schedule table row with rental fee returns correct trace."""
+    # Matches: HH:MM - HH:MM Function Name ... $X.XX
+    result = parse_line_with_trace("11:00 - 11:30 VIP Meet & Greet Room Business Centre Cocktail 20 $500.00")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "schedule_rental"
+    assert trace.extracted["price"] == 500.0
+    # Function name should be cleaned (venue info removed)
+    assert "VIP Meet & Greet Room" in trace.extracted["function"]
+    assert "venue rental" in trace.calculation.lower()
+    assert trace.value == 500.0
+    assert parsed.basis == "flat"
+    assert parsed.value == 500.0
+    # GTD (20) should NOT multiply the price
+    assert parsed.value == 500.0  # Not 20 * 500
+
+
+def test_parse_line_schedule_rental_zero_price():
+    """Schedule table row with $0 price should not match."""
+    result = parse_line_with_trace("11:00 - 11:30 Main Event Brisbane Ballroom Theatre 1174 $0.00")
+    # Should return None because price is 0
+    assert result is None
