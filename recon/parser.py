@@ -46,6 +46,14 @@ class ParseResult:
     unmatched_lines: List[str]  # Lines that looked like pricing but didn't match
 
 
+@dataclass
+class EventDay:
+    """A single day within a multi-day event."""
+    day_number: int
+    event_order: EventOrder
+    page_range: Tuple[int, int]  # (start_page, end_page) 1-indexed
+
+
 def extract_headers(text: str) -> Dict[str, Optional[str]]:
     """
     Extract header fields from EO text.
@@ -916,3 +924,197 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
         matched_lines=matched_lines,
         unmatched_lines=unmatched_lines,
     )
+
+
+def _detect_day_boundaries(pdf_path: Union[str, Path]) -> List[Tuple[int, int, str, str, str]]:
+    """
+    Detect day boundaries in a multi-day event PDF.
+
+    Returns list of (start_page, end_page, beo_number, event_date, day_label) tuples.
+    Pages are 0-indexed.
+    """
+    pdf_path = Path(pdf_path)
+    days = []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        current_day_start = 0
+        current_beo = None
+        current_date = None
+        current_day_label = None
+
+        for page_idx, page in enumerate(pdf.pages):
+            text = page.extract_text() or ""
+
+            # Look for BEO number
+            beo_match = re.search(r"BEO\s*#:\s*(\d+)", text, re.IGNORECASE)
+            page_beo = beo_match.group(1) if beo_match else None
+
+            # Look for Event Date
+            date_match = re.search(r"Event Date:\s*(.+?)(?:\n|$)", text)
+            page_date = date_match.group(1).strip() if date_match else None
+
+            # Look for Day X marker
+            day_match = re.search(r"\bDay\s+(\d+)\b", text)
+            page_day_label = f"Day {day_match.group(1)}" if day_match else None
+
+            # If we see a new BEO number, this is a new day
+            if page_beo and page_beo != current_beo:
+                # Save previous day if we have one
+                if current_beo is not None:
+                    days.append((
+                        current_day_start,
+                        page_idx - 1,
+                        current_beo,
+                        current_date or "",
+                        current_day_label or f"Day {len(days) + 1}",
+                    ))
+                # Start new day
+                current_day_start = page_idx
+                current_beo = page_beo
+                current_date = page_date
+                current_day_label = page_day_label
+            elif current_beo is None and page_beo:
+                # First day
+                current_beo = page_beo
+                current_date = page_date
+                current_day_label = page_day_label
+
+        # Don't forget the last day
+        if current_beo is not None:
+            days.append((
+                current_day_start,
+                len(pdf.pages) - 1,
+                current_beo,
+                current_date or "",
+                current_day_label or f"Day {len(days) + 1}",
+            ))
+
+    return days
+
+
+def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
+    """
+    Parse a multi-day event PDF and return a list of EventDay objects.
+
+    Each day is parsed separately with its own BEO number, date, and line items.
+    For single-day events, returns a list with one EventDay.
+    """
+    pdf_path = Path(pdf_path)
+
+    # Detect day boundaries
+    day_boundaries = _detect_day_boundaries(pdf_path)
+
+    if not day_boundaries:
+        # Fallback: treat as single day
+        event_order = parse_pdf(pdf_path)
+        return [EventDay(
+            day_number=1,
+            event_order=event_order,
+            page_range=(1, 1),
+        )]
+
+    event_days = []
+
+    with pdfplumber.open(pdf_path) as pdf:
+        for day_idx, (start_page, end_page, beo_number, event_date_str, day_label) in enumerate(day_boundaries):
+            # Extract text for just this day's pages
+            day_text = "\n".join(
+                pdf.pages[p].extract_text() or ""
+                for p in range(start_page, end_page + 1)
+            )
+
+            # Parse event date
+            event_date = None
+            if event_date_str:
+                try:
+                    # Try parsing "Wed, 10 Jun 2026" or "Fri 05 Jun 2026" format
+                    for fmt in ["%a, %d %b %Y", "%a %d %b %Y"]:
+                        try:
+                            event_date = datetime.strptime(event_date_str, fmt).date()
+                            break
+                        except ValueError:
+                            continue
+                except Exception:
+                    pass
+
+            # Extract PM number and event name from this day's text
+            headers = extract_headers(day_text)
+
+            # Parse line items for this day
+            line_items: List[LineItem] = []
+            current_section: Optional[str] = None
+
+            for line in day_text.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Check if this line is a section header
+                detected_section = _detect_section(line)
+                if detected_section:
+                    current_section = detected_section
+                    continue
+
+                # Skip if we haven't found a section yet
+                if current_section is None:
+                    continue
+
+                # Try to parse the line
+                parsed = parse_line(line)
+                if parsed is None:
+                    continue
+
+                # Determine category (use override if present)
+                category = parsed.category_override or current_section
+
+                # Handle package splits
+                if parsed.is_package:
+                    for split_category, split_pct in PACKAGE_SPLITS.items():
+                        split_value = round(parsed.value * split_pct, 2)
+                        item = LineItem(
+                            category=split_category,
+                            type=f"{parsed.description} ({int(split_pct * 100)}%)",
+                            basis=parsed.basis,
+                            pax=parsed.pax,
+                            qty=parsed.qty,
+                            guards=parsed.guards,
+                            hours=parsed.hours,
+                            unit_price=parsed.unit_price,
+                            value=split_value,
+                            money_type=parsed.money_type,
+                            posts_to=parsed.posts_to,
+                            needs_manual_value=parsed.needs_manual_value,
+                        )
+                        line_items.append(item)
+                else:
+                    item = LineItem(
+                        category=category,
+                        type=parsed.description,
+                        basis=parsed.basis,
+                        pax=parsed.pax,
+                        qty=parsed.qty,
+                        guards=parsed.guards,
+                        hours=parsed.hours,
+                        unit_price=parsed.unit_price,
+                        value=parsed.value,
+                        money_type=parsed.money_type,
+                        posts_to=parsed.posts_to,
+                        needs_manual_value=parsed.needs_manual_value,
+                    )
+                    line_items.append(item)
+
+            event_order = EventOrder(
+                pm_number=headers["pm_number"] or "",
+                beo_number=beo_number,
+                event_name=headers["event_name"] or "",
+                event_date=event_date,
+                line_items=line_items,
+            )
+
+            event_days.append(EventDay(
+                day_number=day_idx + 1,
+                event_order=event_order,
+                page_range=(start_page + 1, end_page + 1),  # Convert to 1-indexed
+            ))
+
+    return event_days

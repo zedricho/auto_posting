@@ -7,7 +7,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from recon.parser import parse_pdf, parse_pdf_with_traces, ParseResult
+from recon.parser import parse_pdf, parse_pdf_with_traces, parse_pdf_multiday, ParseResult, EventDay
 from recon.builder import compute_totals, generate_excel
 from recon.delphi_adapter import parse_delphi_report
 from recon.reconciler import reconcile
@@ -257,6 +257,12 @@ def render_step_1_upload():
     st.header("Step 1: Upload & Extract")
     st.write("Upload an Event Order PDF to extract line items.")
 
+    # Initialize multi-day session state
+    if "event_days" not in st.session_state:
+        st.session_state.event_days = None
+    if "selected_day_idx" not in st.session_state:
+        st.session_state.selected_day_idx = 0
+
     uploaded_file = st.file_uploader("Choose an EO PDF", type=["pdf"])
 
     if uploaded_file is not None:
@@ -268,23 +274,63 @@ def render_step_1_upload():
                     tmp_path = tmp.name
 
                 try:
-                    event_order = parse_pdf(tmp_path)
-                    st.session_state.event_order = event_order
-                    st.success(f"Extracted {len(event_order.line_items)} line items")
+                    event_days = parse_pdf_multiday(tmp_path)
+                    st.session_state.event_days = event_days
+                    st.session_state.selected_day_idx = 0
+
+                    if len(event_days) > 1:
+                        st.success(f"Multi-day event detected: {len(event_days)} days found")
+                    else:
+                        st.session_state.event_order = event_days[0].event_order
+                        st.success(f"Extracted {len(event_days[0].event_order.line_items)} line items")
                 except Exception as e:
                     st.error(f"Error extracting PDF: {e}")
                     return
                 finally:
                     os.unlink(tmp_path)
 
+    # Multi-day event: show day selector
+    if st.session_state.event_days is not None and len(st.session_state.event_days) > 1:
+        st.divider()
+        st.subheader("📅 Multi-Day Event")
+        st.info("This event spans multiple days. Select which day to process for posting.")
+
+        event_days = st.session_state.event_days
+
+        # Create day selection options
+        day_options = []
+        for day in event_days:
+            date_str = day.event_order.event_date.strftime("%a %d %b %Y") if day.event_order.event_date else "Unknown date"
+            items_count = len(day.event_order.line_items)
+            day_options.append(f"Day {day.day_number}: {date_str} (BEO# {day.event_order.beo_number}) - {items_count} items")
+
+        selected_idx = st.radio(
+            "Select day to process:",
+            range(len(day_options)),
+            format_func=lambda i: day_options[i],
+            index=st.session_state.selected_day_idx,
+            key="day_selector",
+        )
+
+        if selected_idx != st.session_state.selected_day_idx:
+            st.session_state.selected_day_idx = selected_idx
+
+        # Set the selected day's event order
+        st.session_state.event_order = event_days[selected_idx].event_order
+
     # Show extracted data if available
     if st.session_state.event_order is not None:
         event = st.session_state.event_order
+        st.divider()
         st.subheader("Event Details")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("PM#", event.pm_number or "—")
         col2.metric("BEO#", event.beo_number or "—")
         col3.metric("Event", event.event_name or "—")
+        if event.event_date:
+            col4.metric("Date", event.event_date.strftime("%d %b %Y"))
+        else:
+            col4.metric("Date", "—")
 
         st.subheader("Line Items")
 

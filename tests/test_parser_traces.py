@@ -238,3 +238,27 @@ def test_parse_line_barista_coffee():
     assert parsed.needs_manual_value is True
     assert parsed.value == 0.0
     assert parsed.money_type == "consumption"
+
+
+def test_event_day_dataclass():
+    """EventDay dataclass can be instantiated."""
+    from recon.models import EventOrder
+    from recon.parser import EventDay
+
+    event = EventOrder(
+        pm_number="9372",
+        beo_number="2933",
+        event_name="Test Event",
+        event_date=None,
+        line_items=[],
+    )
+
+    day = EventDay(
+        day_number=1,
+        event_order=event,
+        page_range=(1, 2),
+    )
+
+    assert day.day_number == 1
+    assert day.event_order.beo_number == "2933"
+    assert day.page_range == (1, 2)
