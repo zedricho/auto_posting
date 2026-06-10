@@ -337,20 +337,22 @@ def parse_line(line: str) -> Optional[ParsedLine]:
 
     # FALLBACK: Any line with a non-zero dollar amount that wasn't caught above
     # This ensures we don't miss charges like "Infrastructure Charge $5,000"
-    fallback_dollar_match = re.search(
-        r"\$\s*([\d,]+\.?\d*)",
-        line,
-    )
-    if fallback_dollar_match:
-        price = _parse_price(fallback_dollar_match.group(1))
-        if price > 0:  # Only match non-zero amounts
-            return ParsedLine(
-                description=line.strip(),
-                basis="flat",
-                value=price,
-                money_type="contracted",
-                posts_to="both",
-            )
+    # Exclude minimum spend lines - these are thresholds, not charges
+    if "minimum" not in line_lower and "min spend" not in line_lower:
+        fallback_dollar_match = re.search(
+            r"\$\s*([\d,]+\.?\d*)",
+            line,
+        )
+        if fallback_dollar_match:
+            price = _parse_price(fallback_dollar_match.group(1))
+            if price > 0:  # Only match non-zero amounts
+                return ParsedLine(
+                    description=line.strip(),
+                    basis="flat",
+                    value=price,
+                    money_type="contracted",
+                    posts_to="both",
+                )
 
     # No pattern matched
     return None
@@ -690,28 +692,30 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
 
     # FALLBACK: Any line with a non-zero dollar amount that wasn't caught above
     # This ensures we don't miss charges like "Infrastructure Charge $5,000"
-    fallback_dollar_match = re.search(
-        r"\$\s*([\d,]+\.?\d*)",
-        line,
-    )
-    if fallback_dollar_match:
-        price = _parse_price(fallback_dollar_match.group(1))
-        if price > 0:  # Only match non-zero amounts
-            parsed = ParsedLine(
-                description=line.strip(),
-                basis="flat",
-                value=price,
-                money_type="contracted",
-                posts_to="both",
-            )
-            trace = MatchTrace(
-                pattern_name="dollar_amount",
-                matched_text=fallback_dollar_match.group(0),
-                extracted={"price": price},
-                calculation=f"${price:,.2f} (fallback capture)",
-                value=price,
-            )
-            return (parsed, trace)
+    # Exclude minimum spend lines - these are thresholds, not charges
+    if "minimum" not in line_lower and "min spend" not in line_lower:
+        fallback_dollar_match = re.search(
+            r"\$\s*([\d,]+\.?\d*)",
+            line,
+        )
+        if fallback_dollar_match:
+            price = _parse_price(fallback_dollar_match.group(1))
+            if price > 0:  # Only match non-zero amounts
+                parsed = ParsedLine(
+                    description=line.strip(),
+                    basis="flat",
+                    value=price,
+                    money_type="contracted",
+                    posts_to="both",
+                )
+                trace = MatchTrace(
+                    pattern_name="dollar_amount",
+                    matched_text=fallback_dollar_match.group(0),
+                    extracted={"price": price},
+                    calculation=f"${price:,.2f} (fallback capture)",
+                    value=price,
+                )
+                return (parsed, trace)
 
     # No pattern matched
     return None
