@@ -262,3 +262,34 @@ def test_event_day_dataclass():
     assert day.day_number == 1
     assert day.event_order.beo_number == "2933"
     assert day.page_range == (1, 2)
+
+
+def test_parse_line_flat_with_total():
+    """Flat pattern matches 'N @ $X Total' format."""
+    result = parse_line_with_trace("1 Infrastructure Charge @ $5,000.00 Total")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "flat"
+    assert parsed.basis == "flat"
+    assert parsed.qty == 1
+    assert parsed.unit_price == 5000.0
+    assert parsed.value == 5000.0
+
+
+def test_fallback_dollar_amount():
+    """Fallback pattern catches any line with a non-zero $ amount."""
+    # This line has a dollar amount but no standard pattern
+    result = parse_line_with_trace("Minimum F&B spend of $45,000 required")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "dollar_amount"
+    assert parsed.value == 45000.0
+    assert "fallback" in trace.calculation.lower()
+
+
+def test_fallback_ignores_zero_amounts():
+    """Fallback pattern ignores $0 amounts."""
+    result = parse_line_with_trace("Something with $0.00 value")
+    assert result is None
