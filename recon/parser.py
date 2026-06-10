@@ -54,6 +54,14 @@ class EventDay:
     page_range: Tuple[int, int]  # (start_page, end_page) 1-indexed
 
 
+@dataclass
+class MinimumSpend:
+    """Minimum F&B spend information extracted from EO."""
+    amount: float
+    is_met: bool
+    stated_shortfall: Optional[float] = None  # What the EO says (may have human error)
+
+
 def extract_headers(text: str) -> Dict[str, Optional[str]]:
     """
     Extract header fields from EO text.
@@ -89,6 +97,45 @@ def extract_headers(text: str) -> Dict[str, Optional[str]]:
         headers["event_date"] = date_match.group(1).strip()
 
     return headers
+
+
+def extract_minimum_spend(text: str) -> Optional[MinimumSpend]:
+    """
+    Extract minimum F&B spend information from EO text.
+
+    Looks for patterns like:
+    - "Minimum F&B spend of $30,000.00 required - has been met"
+    - "Minimum F&B spend of $30,000.00 required - has not been met - shortfall of $6086.00"
+    """
+    # Look for minimum spend line
+    min_spend_match = re.search(
+        r"Minimum\s+F&B\s+spend\s+of\s+\$?([\d,]+\.?\d*)\s*(?:required)?",
+        text,
+        re.IGNORECASE,
+    )
+    if not min_spend_match:
+        return None
+
+    amount = float(min_spend_match.group(1).replace(",", ""))
+
+    # Check if met
+    is_met = "has been met" in text.lower()
+
+    # Look for stated shortfall
+    shortfall_match = re.search(
+        r"shortfall\s+of\s+\$?([\d,]+\.?\d*)",
+        text,
+        re.IGNORECASE,
+    )
+    stated_shortfall = None
+    if shortfall_match:
+        stated_shortfall = float(shortfall_match.group(1).replace(",", ""))
+
+    return MinimumSpend(
+        amount=amount,
+        is_met=is_met,
+        stated_shortfall=stated_shortfall,
+    )
 
 
 def _parse_price(price_str: str) -> float:
@@ -1106,6 +1153,36 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                         needs_manual_value=parsed.needs_manual_value,
                     )
                     line_items.append(item)
+
+            # Extract minimum spend info and calculate venue hire if needed
+            min_spend = extract_minimum_spend(day_text)
+
+            if min_spend and not min_spend.is_met:
+                # Calculate F&B total from line items
+                fb_total = sum(
+                    item.value for item in line_items
+                    if item.category in ("food", "beverage")
+                )
+
+                # Calculate actual shortfall
+                calculated_shortfall = max(0, min_spend.amount - fb_total)
+
+                if calculated_shortfall > 0:
+                    # Build description with cross-check info
+                    desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min - ${fb_total:,.0f} F&B)"
+                    if min_spend.stated_shortfall:
+                        desc += f" [EO stated: ${min_spend.stated_shortfall:,.0f}]"
+
+                    # Add venue hire line item for the minimum spend shortfall
+                    shortfall_item = LineItem(
+                        category="venue_hire",
+                        type=desc,
+                        basis="flat",
+                        value=round(calculated_shortfall, 2),
+                        money_type="contracted",
+                        posts_to="both",
+                    )
+                    line_items.append(shortfall_item)
 
             event_order = EventOrder(
                 pm_number=headers["pm_number"] or "",
