@@ -163,3 +163,33 @@ def test_parse_line_schedule_rental_zero_price():
     result = parse_line_with_trace("11:00 - 11:30 Main Event Brisbane Ballroom Theatre 1174 $0.00")
     # Should return None because price is 0
     assert result is None
+
+
+def test_parse_line_day_delegate_package():
+    """Day delegate package returns correct trace with per-person calculation."""
+    result = parse_line_with_trace("$89 Half Day Executive Meeting Package AM 15 $89.00")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "day_package"
+    assert trace.extracted["qty"] == 15
+    assert trace.extracted["price_per_person"] == 89.0
+    assert "Half Day" in trace.extracted["package"]
+    assert trace.value == 1335.0  # 15 × $89
+    assert parsed.basis == "per_person"
+    assert parsed.pax == 15
+    assert parsed.unit_price == 89.0
+    assert parsed.value == 1335.0
+
+
+def test_parse_line_day_delegate_package_full_day():
+    """Full day package also matches the day package pattern."""
+    result = parse_line_with_trace("Full Day Meeting Package 20 $150.00")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "day_package"
+    assert trace.extracted["qty"] == 20
+    assert trace.extracted["price_per_person"] == 150.0
+    assert trace.value == 3000.0  # 20 × $150
+    assert parsed.pax == 20

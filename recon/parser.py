@@ -96,10 +96,34 @@ def parse_line(line: str) -> Optional[ParsedLine]:
     """
     line_lower = line.lower()
 
+    # Day delegate package: "Package Name Qty $Price" (per person)
+    # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
+    # The qty is the number of people, price is per person
+    day_package_match = re.search(
+        r"(.+?(?:package|pkg).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)\s*$",
+        line,
+        re.IGNORECASE,
+    )
+    if day_package_match:
+        package_name = day_package_match.group(1).strip()
+        qty = int(day_package_match.group(2))
+        price_per_person = _parse_price(day_package_match.group(3))
+        total_value = round(qty * price_per_person, 2)
+        return ParsedLine(
+            description=package_name,
+            basis="per_person",
+            pax=qty,
+            unit_price=price_per_person,
+            value=total_value,
+            money_type="contracted",
+            posts_to="both",
+        )
+
     # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
     # GTD column is NOT a multiplier - it's just guest count
+    # Allow optional trailing content after price (e.g., checkmarks in "Inc. Package" column)
     schedule_rental_match = re.search(
-        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$(\d+\.?\d*)\s*$",
+        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
         line,
     )
     if schedule_rental_match:
@@ -109,17 +133,21 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             function_name = schedule_rental_match.group(3).strip()
             # Clean up function name - remove venue/setup info that comes after
             # Look for common venue names and truncate there
-            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference"]:
+            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
+                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow"]:
                 if venue_marker in function_name:
                     function_name = function_name.split(venue_marker)[0].strip()
                     break
-            return ParsedLine(
-                description=f"{function_name} (Venue Rental)",
-                basis="flat",
-                value=price,
-                money_type="contracted",
-                posts_to="both",
-            )
+            # Also remove trailing numbers (GTD column that got included)
+            function_name = re.sub(r"\s+\d+\s*$", "", function_name)
+            if function_name:  # Only return if we have a valid function name
+                return ParsedLine(
+                    description=f"{function_name} (Venue Rental)",
+                    basis="flat",
+                    value=price,
+                    money_type="contracted",
+                    posts_to="both",
+                )
 
     # Check for consumption (no price, needs manual entry)
     if "on consumption" in line_lower:
@@ -286,10 +314,41 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
     """
     line_lower = line.lower()
 
+    # Day delegate package: "Package Name Qty $Price" (per person)
+    # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
+    day_package_match = re.search(
+        r"(.+?(?:package|pkg).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)\s*$",
+        line,
+        re.IGNORECASE,
+    )
+    if day_package_match:
+        package_name = day_package_match.group(1).strip()
+        qty = int(day_package_match.group(2))
+        price_per_person = _parse_price(day_package_match.group(3))
+        total_value = round(qty * price_per_person, 2)
+        parsed = ParsedLine(
+            description=package_name,
+            basis="per_person",
+            pax=qty,
+            unit_price=price_per_person,
+            value=total_value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="day_package",
+            matched_text=line.strip(),
+            extracted={"package": package_name, "qty": qty, "price_per_person": price_per_person},
+            calculation=f"{qty} × ${price_per_person:.2f}",
+            value=total_value,
+        )
+        return (parsed, trace)
+
     # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
     # GTD column is NOT a multiplier - it's just guest count
+    # Allow optional trailing content after price (e.g., checkmarks in "Inc. Package" column)
     schedule_rental_match = re.search(
-        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$(\d+\.?\d*)\s*$",
+        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
         line,
     )
     if schedule_rental_match:
@@ -298,25 +357,29 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         if price > 0:
             function_name = schedule_rental_match.group(3).strip()
             # Clean up function name - remove venue/setup info that comes after
-            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference"]:
+            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
+                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow"]:
                 if venue_marker in function_name:
                     function_name = function_name.split(venue_marker)[0].strip()
                     break
-            parsed = ParsedLine(
-                description=f"{function_name} (Venue Rental)",
-                basis="flat",
-                value=price,
-                money_type="contracted",
-                posts_to="both",
-            )
-            trace = MatchTrace(
-                pattern_name="schedule_rental",
-                matched_text=line.strip(),
-                extracted={"function": function_name, "price": price},
-                calculation=f"${price:,.2f} flat (venue rental)",
-                value=price,
-            )
-            return (parsed, trace)
+            # Also remove trailing numbers (GTD column that got included)
+            function_name = re.sub(r"\s+\d+\s*$", "", function_name)
+            if function_name:  # Only return if we have a valid function name
+                parsed = ParsedLine(
+                    description=f"{function_name} (Venue Rental)",
+                    basis="flat",
+                    value=price,
+                    money_type="contracted",
+                    posts_to="both",
+                )
+                trace = MatchTrace(
+                    pattern_name="schedule_rental",
+                    matched_text=line.strip(),
+                    extracted={"function": function_name, "price": price},
+                    calculation=f"${price:,.2f} flat (venue rental)",
+                    value=price,
+                )
+                return (parsed, trace)
 
     # Check for consumption (no price, needs manual entry)
     if "on consumption" in line_lower:
