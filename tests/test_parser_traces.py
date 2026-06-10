@@ -193,3 +193,34 @@ def test_parse_line_day_delegate_package_full_day():
     assert trace.extracted["price_per_person"] == 150.0
     assert trace.value == 3000.0  # 20 × $150
     assert parsed.pax == 20
+
+
+def test_day_package_has_is_package_flag():
+    """Day delegate packages are flagged for splitting."""
+    result = parse_line_with_trace("$89 Half Day Executive Meeting Package AM 15 $89.00")
+    assert result is not None
+    parsed, trace = result
+
+    assert parsed.is_package is True
+    assert "split" in trace.calculation.lower()
+
+
+def test_schedule_rental_has_category_override():
+    """Schedule table rentals have category_override to venue_hire."""
+    result = parse_line_with_trace("10:00 - 14:00 Meeting New Farm Room Classroom 15 $1,456.00")
+    assert result is not None
+    parsed, trace = result
+
+    assert parsed.category_override == "venue_hire"
+    assert "venue_hire" in trace.calculation
+
+
+def test_package_splits_constant():
+    """Package splits add up to 100%."""
+    from recon.parser import PACKAGE_SPLITS
+
+    total = sum(PACKAGE_SPLITS.values())
+    assert total == 1.0
+    assert PACKAGE_SPLITS["food"] == 0.90
+    assert PACKAGE_SPLITS["beverage"] == 0.05
+    assert PACKAGE_SPLITS["resource"] == 0.05

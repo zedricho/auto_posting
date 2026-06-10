@@ -26,6 +26,16 @@ class ParsedLine:
     money_type: Literal["contracted", "consumption", "cash"] = "contracted"
     posts_to: Literal["both", "delphi_only"] = "both"
     needs_manual_value: bool = False
+    category_override: Optional[str] = None  # Force category regardless of section
+    is_package: bool = False  # Day delegate packages need to be split
+
+
+# Package split percentages (food/beverage/resource)
+PACKAGE_SPLITS = {
+    "food": 0.90,
+    "beverage": 0.05,
+    "resource": 0.05,
+}
 
 
 @dataclass
@@ -117,6 +127,7 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             value=total_value,
             money_type="contracted",
             posts_to="both",
+            is_package=True,  # Will be split into food/beverage/resource
         )
 
     # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
@@ -147,6 +158,7 @@ def parse_line(line: str) -> Optional[ParsedLine]:
                     value=price,
                     money_type="contracted",
                     posts_to="both",
+                    category_override="venue_hire",  # Always venue hire regardless of section
                 )
 
     # Check for consumption (no price, needs manual entry)
@@ -334,12 +346,13 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
             value=total_value,
             money_type="contracted",
             posts_to="both",
+            is_package=True,  # Will be split into food/beverage/resource
         )
         trace = MatchTrace(
             pattern_name="day_package",
             matched_text=line.strip(),
             extracted={"package": package_name, "qty": qty, "price_per_person": price_per_person},
-            calculation=f"{qty} × ${price_per_person:.2f}",
+            calculation=f"{qty} × ${price_per_person:.2f} (split: 90% food, 5% bev, 5% res)",
             value=total_value,
         )
         return (parsed, trace)
@@ -371,12 +384,13 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
                     value=price,
                     money_type="contracted",
                     posts_to="both",
+                    category_override="venue_hire",  # Always venue hire regardless of section
                 )
                 trace = MatchTrace(
                     pattern_name="schedule_rental",
                     matched_text=line.strip(),
                     extracted={"function": function_name, "price": price},
-                    calculation=f"${price:,.2f} flat (venue rental)",
+                    calculation=f"${price:,.2f} flat (venue rental → venue_hire)",
                     value=price,
                 )
                 return (parsed, trace)
@@ -691,22 +705,45 @@ def parse_pdf(pdf_path: Union[str, Path]) -> EventOrder:
         if parsed is None:
             continue
 
-        # Convert ParsedLine to LineItem
-        item = LineItem(
-            category=current_section,
-            type=parsed.description,
-            basis=parsed.basis,
-            pax=parsed.pax,
-            qty=parsed.qty,
-            guards=parsed.guards,
-            hours=parsed.hours,
-            unit_price=parsed.unit_price,
-            value=parsed.value,
-            money_type=parsed.money_type,
-            posts_to=parsed.posts_to,
-            needs_manual_value=parsed.needs_manual_value,
-        )
-        line_items.append(item)
+        # Determine category (use override if present)
+        category = parsed.category_override or current_section
+
+        # Handle package splits (food/beverage/resource)
+        if parsed.is_package:
+            for split_category, split_pct in PACKAGE_SPLITS.items():
+                split_value = round(parsed.value * split_pct, 2)
+                item = LineItem(
+                    category=split_category,
+                    type=f"{parsed.description} ({int(split_pct * 100)}%)",
+                    basis=parsed.basis,
+                    pax=parsed.pax,
+                    qty=parsed.qty,
+                    guards=parsed.guards,
+                    hours=parsed.hours,
+                    unit_price=parsed.unit_price,
+                    value=split_value,
+                    money_type=parsed.money_type,
+                    posts_to=parsed.posts_to,
+                    needs_manual_value=parsed.needs_manual_value,
+                )
+                line_items.append(item)
+        else:
+            # Standard single line item
+            item = LineItem(
+                category=category,
+                type=parsed.description,
+                basis=parsed.basis,
+                pax=parsed.pax,
+                qty=parsed.qty,
+                guards=parsed.guards,
+                hours=parsed.hours,
+                unit_price=parsed.unit_price,
+                value=parsed.value,
+                money_type=parsed.money_type,
+                posts_to=parsed.posts_to,
+                needs_manual_value=parsed.needs_manual_value,
+            )
+            line_items.append(item)
 
     return EventOrder(
         pm_number=headers["pm_number"] or "",
@@ -787,22 +824,45 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
             if parsed.needs_manual_value and context_line:
                 item_type = f"{context_line}: {line}"
 
-            # Convert ParsedLine to LineItem
-            item = LineItem(
-                category=current_section,
-                type=item_type,
-                basis=parsed.basis,
-                pax=parsed.pax,
-                qty=parsed.qty,
-                guards=parsed.guards,
-                hours=parsed.hours,
-                unit_price=parsed.unit_price,
-                value=parsed.value,
-                money_type=parsed.money_type,
-                posts_to=parsed.posts_to,
-                needs_manual_value=parsed.needs_manual_value,
-            )
-            line_items.append(item)
+            # Determine category (use override if present)
+            category = parsed.category_override or current_section
+
+            # Handle package splits (food/beverage/resource)
+            if parsed.is_package:
+                for split_category, split_pct in PACKAGE_SPLITS.items():
+                    split_value = round(parsed.value * split_pct, 2)
+                    item = LineItem(
+                        category=split_category,
+                        type=f"{item_type} ({int(split_pct * 100)}%)",
+                        basis=parsed.basis,
+                        pax=parsed.pax,
+                        qty=parsed.qty,
+                        guards=parsed.guards,
+                        hours=parsed.hours,
+                        unit_price=parsed.unit_price,
+                        value=split_value,
+                        money_type=parsed.money_type,
+                        posts_to=parsed.posts_to,
+                        needs_manual_value=parsed.needs_manual_value,
+                    )
+                    line_items.append(item)
+            else:
+                # Standard single line item
+                item = LineItem(
+                    category=category,
+                    type=item_type,
+                    basis=parsed.basis,
+                    pax=parsed.pax,
+                    qty=parsed.qty,
+                    guards=parsed.guards,
+                    hours=parsed.hours,
+                    unit_price=parsed.unit_price,
+                    value=parsed.value,
+                    money_type=parsed.money_type,
+                    posts_to=parsed.posts_to,
+                    needs_manual_value=parsed.needs_manual_value,
+                )
+                line_items.append(item)
             matched_lines.append((line, parsed, trace))
             context_line = None  # Reset context after using it
         elif _looks_like_pricing(line):
