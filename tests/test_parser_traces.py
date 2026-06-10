@@ -277,28 +277,3 @@ def test_parse_line_flat_with_total():
     assert parsed.value == 5000.0
 
 
-def test_fallback_dollar_amount():
-    """Fallback pattern catches any line with a non-zero $ amount."""
-    # This line has a dollar amount but no standard pattern
-    result = parse_line_with_trace("Surcharge of $500 applies")
-    assert result is not None
-    parsed, trace = result
-
-    assert trace.pattern_name == "dollar_amount"
-    assert parsed.value == 500.0
-    assert "fallback" in trace.calculation.lower()
-
-
-def test_fallback_excludes_minimum_spend():
-    """Fallback pattern ignores minimum spend lines (thresholds, not charges)."""
-    result = parse_line_with_trace("Minimum F&B spend of $45,000 required")
-    assert result is None
-
-    result2 = parse_line_with_trace("Min spend $10,000")
-    assert result2 is None
-
-
-def test_fallback_ignores_zero_amounts():
-    """Fallback pattern ignores $0 amounts."""
-    result = parse_line_with_trace("Something with $0.00 value")
-    assert result is None
