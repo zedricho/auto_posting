@@ -224,3 +224,17 @@ def test_package_splits_constant():
     assert PACKAGE_SPLITS["food"] == 0.90
     assert PACKAGE_SPLITS["beverage"] == 0.05
     assert PACKAGE_SPLITS["resource"] == 0.05
+
+
+def test_parse_line_barista_coffee():
+    """Barista coffee orders are treated like consumption - manual entry after event."""
+    result = parse_line_with_trace("Barista Coffee Orders")
+    assert result is not None
+    parsed, trace = result
+
+    assert trace.pattern_name == "barista"
+    assert "Manual entry" in trace.calculation
+    assert parsed.basis == "consumption"
+    assert parsed.needs_manual_value is True
+    assert parsed.value == 0.0
+    assert parsed.money_type == "consumption"

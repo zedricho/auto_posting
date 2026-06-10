@@ -173,6 +173,17 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             needs_manual_value=True,
         )
 
+    # Barista coffee orders - consumption-style, needs manual entry after event
+    if "barista" in line_lower and ("coffee" in line_lower or "order" in line_lower):
+        return ParsedLine(
+            description="Barista Coffee Orders",
+            basis="consumption",
+            value=0.0,
+            money_type="consumption",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+
     # Check for guest expense / cash (no price, needs manual entry)
     if "at guest expense" in line_lower:
         desc = re.sub(r"\s*at guest expense\s*", "", line, flags=re.IGNORECASE).strip()
@@ -411,6 +422,25 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
             matched_text=line.strip(),
             extracted={},
             calculation="Manual entry required",
+            value=0.0,
+        )
+        return (parsed, trace)
+
+    # Barista coffee orders - consumption-style, needs manual entry after event
+    if "barista" in line_lower and ("coffee" in line_lower or "order" in line_lower):
+        parsed = ParsedLine(
+            description="Barista Coffee Orders",
+            basis="consumption",
+            value=0.0,
+            money_type="consumption",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="barista",
+            matched_text=line.strip(),
+            extracted={},
+            calculation="Manual entry required (post-event)",
             value=0.0,
         )
         return (parsed, trace)
