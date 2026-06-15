@@ -200,17 +200,25 @@ def parse_line(line: str) -> Optional[ParsedLine]:
         price = _parse_price(schedule_rental_match.group(4))
         # Only match if price is non-zero (skip $.00 rows)
         if price > 0:
-            function_name = schedule_rental_match.group(3).strip()
+            full_text = schedule_rental_match.group(3).strip()
+            function_name = full_text
+            venue_found = None
             # Clean up function name - remove venue/setup info that comes after
             # Look for common venue names and truncate there
             for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
-                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow"]:
+                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow",
+                                 "Paddington Room", "South Bank Room", "Moreton Room", "Ascot", "Teneriffe",
+                                 "Level 7", "Level 2", "Green Room"]:
                 if venue_marker in function_name:
+                    venue_found = venue_marker
                     function_name = function_name.split(venue_marker)[0].strip()
                     break
             # Also remove trailing numbers (GTD column that got included)
             function_name = re.sub(r"\s+\d+\s*$", "", function_name)
-            if function_name:  # Only return if we have a valid function name
+            # If function name is empty after cleanup, use the venue name
+            if not function_name and venue_found:
+                function_name = venue_found
+            if function_name:
                 return ParsedLine(
                     description=f"{function_name} (Venue Rental)",
                     basis="flat",
@@ -463,16 +471,24 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         price = _parse_price(schedule_rental_match.group(4))
         # Only match if price is non-zero (skip $.00 rows)
         if price > 0:
-            function_name = schedule_rental_match.group(3).strip()
+            full_text = schedule_rental_match.group(3).strip()
+            function_name = full_text
+            venue_found = None
             # Clean up function name - remove venue/setup info that comes after
             for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
-                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow"]:
+                                 "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow",
+                                 "Paddington Room", "South Bank Room", "Moreton Room", "Ascot", "Teneriffe",
+                                 "Level 7", "Level 2", "Green Room"]:
                 if venue_marker in function_name:
+                    venue_found = venue_marker
                     function_name = function_name.split(venue_marker)[0].strip()
                     break
             # Also remove trailing numbers (GTD column that got included)
             function_name = re.sub(r"\s+\d+\s*$", "", function_name)
-            if function_name:  # Only return if we have a valid function name
+            # If function name is empty after cleanup, use the venue name
+            if not function_name and venue_found:
+                function_name = venue_found
+            if function_name:
                 parsed = ParsedLine(
                     description=f"{function_name} (Venue Rental)",
                     basis="flat",
@@ -1202,9 +1218,22 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 else:
                     category = current_section
 
+                # Content-based category overrides to fix two-column PDF interleaving issues
+                line_lower = line.lower()
+
                 # Coffee always goes to food, not beverage
-                if "coffee" in line.lower() and category == "beverage":
+                if "coffee" in line_lower and category == "beverage":
                     category = "food"
+
+                # Booth fees, exhibition items, Per Day charges → resource (setup costs)
+                if category == "beverage":
+                    if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi"]):
+                        category = "resource"
+
+                # Crew meals and food items with "Pax @" in wrong section → food
+                if category == "resource":
+                    if "pax @" in line_lower and any(kw in line_lower for kw in ["crew", "meal", "menu", "per person"]):
+                        category = "food"
 
                 # Handle package splits
                 if parsed.is_package:
