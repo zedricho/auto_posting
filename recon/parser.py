@@ -1248,9 +1248,9 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 if "coffee" in line_lower and category == "beverage":
                     category = "food"
 
-                # Booth fees, exhibition items, Per Day charges → resource (setup costs)
+                # Booth fees, exhibition items, Per Day charges, infrastructure → resource (setup costs)
                 if category == "beverage":
-                    if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi"]):
+                    if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi", "infrastructure"]):
                         category = "resource"
                     # Simple price patterns like "1 @ $X.00" without food/beverage keywords → resource
                     # These are typically setup/IT charges that got miscategorized due to column interleaving
