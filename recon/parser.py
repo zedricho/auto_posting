@@ -1366,37 +1366,51 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
             min_spend = extract_minimum_spend(day_text)
 
             if min_spend and not min_spend.is_met:
-                # Calculate F&B total from line items (for reference)
-                fb_total = sum(
-                    item.value for item in line_items
-                    if item.category in ("food", "beverage")
+                # Check if we already have a venue_hire item for the shortfall
+                # (it may have been parsed as a line item already)
+                # Check both by keyword and by matching the shortfall value
+                shortfall_value_to_check = min_spend.stated_shortfall or 0
+                existing_shortfall = any(
+                    item.category == "venue_hire" and (
+                        "shortfall" in item.type.lower() or
+                        "minimum" in item.type.lower() or
+                        abs(item.value - shortfall_value_to_check) < 1  # Same value
+                    )
+                    for item in line_items
                 )
 
-                # Use stated shortfall as primary value (it's authoritative from the EO)
-                # Fall back to calculated shortfall only if stated isn't available
-                if min_spend.stated_shortfall is not None:
-                    shortfall_value = min_spend.stated_shortfall
-                    desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min, shortfall ${shortfall_value:,.0f})"
-                    # Add calculated as cross-check note if different
-                    calculated_shortfall = max(0, min_spend.amount - fb_total)
-                    if abs(calculated_shortfall - shortfall_value) > 1:
-                        desc += f" [Calculated: ${calculated_shortfall:,.0f}]"
-                else:
-                    # No stated shortfall, calculate it
-                    shortfall_value = max(0, min_spend.amount - fb_total)
-                    desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min - ${fb_total:,.0f} F&B)"
-
-                if shortfall_value > 0:
-                    # Add venue hire line item for the minimum spend shortfall
-                    shortfall_item = LineItem(
-                        category="venue_hire",
-                        type=desc,
-                        basis="flat",
-                        value=round(shortfall_value, 2),
-                        money_type="contracted",
-                        posts_to="both",
+                if not existing_shortfall:
+                    # Calculate F&B total from line items (for reference)
+                    fb_total = sum(
+                        item.value for item in line_items
+                        if item.category in ("food", "beverage")
                     )
-                    line_items.append(shortfall_item)
+
+                    # Use stated shortfall as primary value (it's authoritative from the EO)
+                    # Fall back to calculated shortfall only if stated isn't available
+                    if min_spend.stated_shortfall is not None:
+                        shortfall_value = min_spend.stated_shortfall
+                        desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min, shortfall ${shortfall_value:,.0f})"
+                        # Add calculated as cross-check note if different
+                        calculated_shortfall = max(0, min_spend.amount - fb_total)
+                        if abs(calculated_shortfall - shortfall_value) > 1:
+                            desc += f" [Calculated: ${calculated_shortfall:,.0f}]"
+                    else:
+                        # No stated shortfall, calculate it
+                        shortfall_value = max(0, min_spend.amount - fb_total)
+                        desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min - ${fb_total:,.0f} F&B)"
+
+                    if shortfall_value > 0:
+                        # Add venue hire line item for the minimum spend shortfall
+                        shortfall_item = LineItem(
+                            category="venue_hire",
+                            type=desc,
+                            basis="flat",
+                            value=round(shortfall_value, 2),
+                            money_type="contracted",
+                            posts_to="both",
+                        )
+                        line_items.append(shortfall_item)
 
             event_order = EventOrder(
                 pm_number=headers["pm_number"] or "",
