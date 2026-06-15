@@ -353,6 +353,26 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             posts_to="both",
         )
 
+    # Surcharge/fee pattern without leading quantity: text@ $X Total
+    # E.g., "surcharge per item@ $135.60 Total"
+    surcharge_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Total",
+        line,
+        re.IGNORECASE,
+    )
+    if surcharge_match:
+        price = _parse_price(surcharge_match.group(1))
+        if price > 0:
+            return ParsedLine(
+                description=line.strip(),
+                basis="flat",
+                qty=1,
+                unit_price=price,
+                value=price,
+                money_type="contracted",
+                posts_to="both",
+            )
+
     # Standalone hourly rate: @ $X Per Hour (needs manual hours/guards entry)
     standalone_hourly_match = re.search(
         r"@\s*\$?([\d,]+\.?\d*)\s*Per\s*Hour",
@@ -1181,6 +1201,10 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                     continue
                 else:
                     category = current_section
+
+                # Coffee always goes to food, not beverage
+                if "coffee" in line.lower() and category == "beverage":
+                    category = "food"
 
                 # Handle package splits
                 if parsed.is_package:
