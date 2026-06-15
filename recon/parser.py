@@ -417,6 +417,25 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             needs_manual_value=True,
         )
 
+    # Standalone "@ $X Each" pattern (needs manual qty entry)
+    # E.g., "@ $55.00 Each" on its own line
+    standalone_each_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Each",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_each_match:
+        price = _parse_price(standalone_each_match.group(1))
+        return ParsedLine(
+            description=line.strip(),
+            basis="per_unit",
+            unit_price=price,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+
     # No pattern matched
     return None
 
@@ -758,6 +777,32 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         trace = MatchTrace(
             pattern_name="per_unit_rate_only",
             matched_text=standalone_per_unit_match.group(0),
+            extracted={"price": price},
+            calculation=f"${price:.2f} × ? qty (needs manual entry)",
+            value=0.0,
+        )
+        return (parsed, trace)
+
+    # Standalone "@ $X Each" pattern (needs manual qty entry)
+    standalone_each_match = re.search(
+        r"@\s*\$?([\d,]+\.?\d*)\s*Each",
+        line,
+        re.IGNORECASE,
+    )
+    if standalone_each_match:
+        price = _parse_price(standalone_each_match.group(1))
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="per_unit",
+            unit_price=price,
+            value=0.0,
+            money_type="contracted",
+            posts_to="both",
+            needs_manual_value=True,
+        )
+        trace = MatchTrace(
+            pattern_name="each_rate_only",
+            matched_text=standalone_each_match.group(0),
             extracted={"price": price},
             calculation=f"${price:.2f} × ? qty (needs manual entry)",
             value=0.0,
@@ -1248,9 +1293,9 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 if "coffee" in line_lower and category == "beverage":
                     category = "food"
 
-                # Booth fees, exhibition items, Per Day charges, infrastructure → resource (setup costs)
+                # Booth fees, exhibition items, Per Day charges, infrastructure, furniture → resource (setup costs)
                 if category == "beverage":
-                    if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi", "infrastructure"]):
+                    if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi", "infrastructure", "chair", "table", "linen", "napkin", "tablecloth"]):
                         category = "resource"
                     # Simple price patterns like "1 @ $X.00" without food/beverage keywords → resource
                     # These are typically setup/IT charges that got miscategorized due to column interleaving
@@ -1321,27 +1366,33 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
             min_spend = extract_minimum_spend(day_text)
 
             if min_spend and not min_spend.is_met:
-                # Calculate F&B total from line items
+                # Calculate F&B total from line items (for reference)
                 fb_total = sum(
                     item.value for item in line_items
                     if item.category in ("food", "beverage")
                 )
 
-                # Calculate actual shortfall
-                calculated_shortfall = max(0, min_spend.amount - fb_total)
-
-                if calculated_shortfall > 0:
-                    # Build description with cross-check info
+                # Use stated shortfall as primary value (it's authoritative from the EO)
+                # Fall back to calculated shortfall only if stated isn't available
+                if min_spend.stated_shortfall is not None:
+                    shortfall_value = min_spend.stated_shortfall
+                    desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min, shortfall ${shortfall_value:,.0f})"
+                    # Add calculated as cross-check note if different
+                    calculated_shortfall = max(0, min_spend.amount - fb_total)
+                    if abs(calculated_shortfall - shortfall_value) > 1:
+                        desc += f" [Calculated: ${calculated_shortfall:,.0f}]"
+                else:
+                    # No stated shortfall, calculate it
+                    shortfall_value = max(0, min_spend.amount - fb_total)
                     desc = f"Minimum F&B Spend Shortfall (${min_spend.amount:,.0f} min - ${fb_total:,.0f} F&B)"
-                    if min_spend.stated_shortfall:
-                        desc += f" [EO stated: ${min_spend.stated_shortfall:,.0f}]"
 
+                if shortfall_value > 0:
                     # Add venue hire line item for the minimum spend shortfall
                     shortfall_item = LineItem(
                         category="venue_hire",
                         type=desc,
                         basis="flat",
-                        value=round(calculated_shortfall, 2),
+                        value=round(shortfall_value, 2),
                         money_type="contracted",
                         posts_to="both",
                     )
