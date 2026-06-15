@@ -118,8 +118,12 @@ def extract_minimum_spend(text: str) -> Optional[MinimumSpend]:
 
     amount = float(min_spend_match.group(1).replace(",", ""))
 
-    # Check if met
-    is_met = "has been met" in text.lower()
+    # Check if met - look for various formats:
+    # - "has been met"
+    # - "- met" (common shorthand)
+    # - "- has been met"
+    text_lower = text.lower()
+    is_met = "has been met" in text_lower or "- met" in text_lower
 
     # Look for stated shortfall
     shortfall_match = re.search(
@@ -316,6 +320,8 @@ def parse_line(line: str) -> Optional[ParsedLine]:
     if per_unit_match:
         qty = int(per_unit_match.group(1))
         price = _parse_price(per_unit_match.group(2))
+        # "Per Bar" items are setup costs, not beverages
+        cat_override = "resource" if "per bar" in line.lower() else None
         return ParsedLine(
             description=line.strip(),
             basis="per_unit",
@@ -324,6 +330,7 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             value=round(qty * price, 2),
             money_type="contracted",
             posts_to="both",
+            category_override=cat_override,
         )
 
     # Flat single item pattern: N @ $X or [text] N @ $X or N [text] @ $X Total
@@ -617,6 +624,8 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         qty = int(per_unit_match.group(1))
         price = _parse_price(per_unit_match.group(2))
         value = round(qty * price, 2)
+        # "Per Bar" items are setup costs, not beverages
+        cat_override = "resource" if "per bar" in line.lower() else None
 
         parsed = ParsedLine(
             description=line.strip(),
@@ -626,6 +635,7 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
             value=value,
             money_type="contracted",
             posts_to="both",
+            category_override=cat_override,
         )
         trace = MatchTrace(
             pattern_name="per_unit",
@@ -727,6 +737,8 @@ SECTION_MARKERS = {
     "menu content": "food",
     "beverage selection": "beverage",
     "additional resources": "resource",
+    "set up": "resource",
+    "setup": "resource",  # Alternative without space
     "security": "other",
     "venue hire": "venue_hire",
     "minimum spend": "venue_hire",
