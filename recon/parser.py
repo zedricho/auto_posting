@@ -11,6 +11,92 @@ import pdfplumber
 from recon.models import LineItem, EventOrder, MatchTrace
 
 
+def _extract_column_text(page) -> str:
+    """
+    Extract text from a PDF page, handling two-column layouts.
+
+    EO PDFs often have two columns:
+    - Left: Menu content, beverage selection, etc.
+    - Right: SET UP, resources, etc.
+
+    Standard extraction reads left-to-right across the full width, which
+    interleaves content from both columns. This function detects columns
+    and extracts left column fully first, then right column, so section
+    headers stay with their content.
+    """
+    words = page.extract_words()
+    if not words:
+        return page.extract_text() or ""
+
+    # Get page dimensions
+    page_width = page.width
+    midpoint = page_width / 2
+
+    # Check if this looks like a two-column layout
+    # Look for words on both sides of the midpoint
+    left_words = [w for w in words if w['x1'] < midpoint + 20]  # Allow some overlap
+    right_words = [w for w in words if w['x0'] > midpoint - 20]
+
+    # If not clearly two columns (one side is mostly empty), use standard extraction
+    if len(left_words) < 10 or len(right_words) < 10:
+        return page.extract_text() or ""
+
+    # Check if there's a clear gap in the middle (column separator)
+    x_positions = sorted(set(w['x0'] for w in words))
+    has_gap = False
+    for i in range(len(x_positions) - 1):
+        if x_positions[i] < midpoint < x_positions[i + 1]:
+            gap = x_positions[i + 1] - x_positions[i]
+            if gap > 30:  # Significant gap indicates columns
+                has_gap = True
+                break
+
+    if not has_gap:
+        return page.extract_text() or ""
+
+    # Split words into left and right columns (using strict midpoint)
+    left_words = [w for w in words if w['x0'] < midpoint]
+    right_words = [w for w in words if w['x0'] >= midpoint]
+
+    def reconstruct_text(word_list):
+        """Reconstruct text from words, grouping by line."""
+        if not word_list:
+            return ""
+
+        # Sort by vertical position (top), then horizontal (x0)
+        word_list = sorted(word_list, key=lambda w: (w['top'], w['x0']))
+
+        lines = []
+        current_line = []
+        current_top = None
+        line_tolerance = 5  # Words within 5 pts vertically are same line
+
+        for word in word_list:
+            if current_top is None or abs(word['top'] - current_top) <= line_tolerance:
+                current_line.append(word['text'])
+                if current_top is None:
+                    current_top = word['top']
+            else:
+                # New line
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word['text']]
+                current_top = word['top']
+
+        # Don't forget the last line
+        if current_line:
+            lines.append(' '.join(current_line))
+
+        return '\n'.join(lines)
+
+    # Extract left column first, then right column
+    left_text = reconstruct_text(left_words)
+    right_text = reconstruct_text(right_words)
+
+    # Combine: left column content, then right column content
+    return left_text + "\n\n" + right_text
+
+
 @dataclass
 class ParsedLine:
     """Intermediate result from parsing a line (before category assignment)."""
@@ -894,8 +980,8 @@ def parse_pdf(pdf_path: Union[str, Path]) -> EventOrder:
     pdf_path = Path(pdf_path)
 
     with pdfplumber.open(pdf_path) as pdf:
-        # Extract all text
-        full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        # Extract all text using column-aware extraction
+        full_text = "\n".join(_extract_column_text(page) for page in pdf.pages)
 
     # Extract headers
     headers = extract_headers(full_text)
@@ -1006,7 +1092,8 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
     pdf_path = Path(pdf_path)
 
     with pdfplumber.open(pdf_path) as pdf:
-        full_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        # Use column-aware extraction
+        full_text = "\n".join(_extract_column_text(page) for page in pdf.pages)
 
     # Extract headers
     headers = extract_headers(full_text)
@@ -1209,9 +1296,9 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
 
     with pdfplumber.open(pdf_path) as pdf:
         for day_idx, (start_page, end_page, beo_number, event_date_str, day_label) in enumerate(day_boundaries):
-            # Extract text for just this day's pages
+            # Extract text for just this day's pages using column-aware extraction
             day_text = "\n".join(
-                pdf.pages[p].extract_text() or ""
+                _extract_column_text(pdf.pages[p])
                 for p in range(start_page, end_page + 1)
             )
 
