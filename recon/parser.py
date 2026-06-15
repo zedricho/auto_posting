@@ -747,11 +747,59 @@ SECTION_MARKERS = {
 
 
 def _detect_section(text: str) -> Optional[str]:
-    """Detect which section a line belongs to based on markers."""
-    text_lower = text.lower()
+    """Detect which section a line belongs to based on markers.
+
+    Only matches true section headers, not incidental occurrences of marker text.
+    Section headers are typically standalone or at the start of a line, like:
+    - "SET UP" (standalone)
+    - "MENU CONTENT" (standalone)
+
+    We avoid matching:
+    - "Existing Set Up" in schedule table rows
+    - "Set Up - Something" which is content, not a header
+    - Lines that are clearly content (start with "Serve Time:", prices, etc.)
+    """
+    text_lower = text.lower().strip()
+
+    # Skip schedule table rows (start with time like "07:00" or "7:00")
+    if re.match(r"^\d{1,2}:\d{2}", text_lower):
+        return None
+
+    # Skip lines that are clearly content, not headers
+    content_prefixes = ["serve time", "served", "dietaries", "notes", "client providing"]
+    for prefix in content_prefixes:
+        if text_lower.startswith(prefix):
+            return None
+
     for marker, category in SECTION_MARKERS.items():
-        if marker in text_lower:
+        if marker not in text_lower:
+            continue
+
+        # "set up" requires special handling - only match true headers
+        if marker in ["set up", "setup"]:
+            # Skip "Existing Set Up" (schedule table)
+            if "existing set up" in text_lower:
+                continue
+            # Skip "Set Up - Something" (content description, not header)
+            if re.search(r"set\s*up\s*-\s*\w", text_lower):
+                continue
+            # Skip if line contains other content indicators
+            if "serve time" in text_lower or "pax" in text_lower:
+                continue
+            # Only match if "SET UP" appears standalone (header, not part of content)
+            # Must be at end of line or followed only by whitespace/column content
+            if text_lower == "set up" or text_lower.endswith(" set up"):
+                return category
+            continue
+
+        # For other markers, check if they appear prominently
+        if text_lower.startswith(marker):
             return category
+
+        # Menu content, beverage selection are distinct enough to match anywhere
+        if marker in ["menu content", "beverage selection", "additional resources"]:
+            return category
+
     return None
 
 
@@ -1118,17 +1166,21 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                     current_section = detected_section
                     continue
 
-                # Skip if we haven't found a section yet
-                if current_section is None:
-                    continue
-
                 # Try to parse the line
                 parsed = parse_line(line)
                 if parsed is None:
                     continue
 
                 # Determine category (use override if present)
-                category = parsed.category_override or current_section
+                # Items with category_override can be processed even before a section is detected
+                # (e.g., venue rentals in the schedule table at the top of the page)
+                if parsed.category_override:
+                    category = parsed.category_override
+                elif current_section is None:
+                    # Skip lines without override if we haven't found a section yet
+                    continue
+                else:
+                    category = current_section
 
                 # Handle package splits
                 if parsed.is_package:
