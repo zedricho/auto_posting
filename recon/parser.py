@@ -1190,6 +1190,7 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
             # Parse line items for this day
             line_items: List[LineItem] = []
             current_section: Optional[str] = None
+            context_lines: List[str] = []  # Track recent non-parsed lines for context
 
             for line in day_text.split("\n"):
                 line = line.strip()
@@ -1200,11 +1201,33 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 detected_section = _detect_section(line)
                 if detected_section:
                     current_section = detected_section
+                    context_lines = []  # Reset context on section change
                     continue
 
                 # Try to parse the line
                 parsed = parse_line(line)
                 if parsed is None:
+                    # Track non-parsed lines as potential context/headers
+                    # Only keep lines that look like actual headers:
+                    # - Not bullet points
+                    # - Not times
+                    # - Not common boilerplate
+                    # - Reasonable length (5-60 chars)
+                    # - Contains letters (not just numbers/symbols)
+                    is_header_candidate = (
+                        not line.startswith(("\uf0b7", "•", "-", "o ", "*")) and
+                        not re.match(r"^\d{1,2}:\d{2}", line) and
+                        5 <= len(line) <= 60 and
+                        re.search(r"[a-zA-Z]", line) and
+                        not any(skip in line.lower() for skip in [
+                            "event order", "organization", "signature", "date printed",
+                            "deactivated", "please note", "as per", "ready for service"
+                        ])
+                    )
+                    if is_header_candidate:
+                        context_lines.append(line)
+                    # Keep only last 3 context lines
+                    context_lines = context_lines[-3:]
                     continue
 
                 # Determine category (use override if present)
@@ -1229,11 +1252,34 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 if category == "beverage":
                     if any(kw in line_lower for kw in ["per booth", "booth fee", "exhibition", "per day", "wifi"]):
                         category = "resource"
+                    # Simple price patterns like "1 @ $X.00" without food/beverage keywords → resource
+                    # These are typically setup/IT charges that got miscategorized due to column interleaving
+                    elif re.match(r"^\d+\s*@\s*\$[\d,]+\.?\d*$", line.strip()):
+                        # It's a simple "N @ $X" pattern - likely a setup charge, not food/beverage
+                        category = "resource"
 
                 # Crew meals and food items with "Pax @" in wrong section → food
                 if category == "resource":
                     if "pax @" in line_lower and any(kw in line_lower for kw in ["crew", "meal", "menu", "per person"]):
                         category = "food"
+
+                # Build description, potentially using context for better naming
+                description = parsed.description
+
+                # For resource items with generic descriptions (like "1 @ $200.00 Per Day"),
+                # try to find a better name from context (preceding header lines)
+                if category == "resource" and context_lines:
+                    # Look for a header-like line in context (WiFi, IT services, etc.)
+                    for ctx in reversed(context_lines):
+                        ctx_clean = ctx.strip()
+                        # Skip lines that are just times, prices, or too short
+                        if len(ctx_clean) > 3 and not re.match(r"^\d", ctx_clean):
+                            # Use this as the description prefix
+                            description = f"{ctx_clean}: {parsed.description}"
+                            break
+
+                # Clear context after using it for a priced item
+                context_lines = []
 
                 # Handle package splits
                 if parsed.is_package:
@@ -1241,7 +1287,7 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                         split_value = round(parsed.value * split_pct, 2)
                         item = LineItem(
                             category=split_category,
-                            type=f"{parsed.description} ({int(split_pct * 100)}%)",
+                            type=f"{description} ({int(split_pct * 100)}%)",
                             basis=parsed.basis,
                             pax=parsed.pax,
                             qty=parsed.qty,
@@ -1257,7 +1303,7 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 else:
                     item = LineItem(
                         category=category,
-                        type=parsed.description,
+                        type=description,
                         basis=parsed.basis,
                         pax=parsed.pax,
                         qty=parsed.qty,
