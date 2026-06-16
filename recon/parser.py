@@ -242,9 +242,12 @@ def parse_line(line: str) -> Optional[ParsedLine]:
 
     # Day delegate package: "Package Name Qty $Price" (per person)
     # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
+    # E.g., "Full Day Delegate 500 $115.00"
     # The qty is the number of people, price is per person
+    # Match "package", "pkg", or "delegate" keywords
+    # Allow trailing content after price (checkmarks, "Inc." column, etc.)
     day_package_match = re.search(
-        r"(.+?(?:package|pkg).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)\s*$",
+        r"(.+?(?:package|pkg|delegate).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)(?:\s|$)",
         line,
         re.IGNORECASE,
     )
@@ -525,8 +528,10 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
 
     # Day delegate package: "Package Name Qty $Price" (per person)
     # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
+    # E.g., "Full Day Delegate 500 $115.00"
+    # Match "package", "pkg", or "delegate" keywords
     day_package_match = re.search(
-        r"(.+?(?:package|pkg).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)\s*$",
+        r"(.+?(?:package|pkg|delegate).*?)\s+(\d+)\s+\$(\d[\d,]*\.?\d*)(?:\s|$)",
         line,
         re.IGNORECASE,
     )
@@ -1014,17 +1019,23 @@ def parse_pdf(pdf_path: Union[str, Path]) -> EventOrder:
             current_section = detected_section
             continue
 
-        # Skip if we haven't found a section yet
-        if current_section is None:
-            continue
-
         # Try to parse the line
         parsed = parse_line(line)
         if parsed is None:
             continue
 
         # Determine category (use override if present)
-        category = parsed.category_override or current_section
+        # Items with category_override or is_package can be processed even before a section is detected
+        if parsed.category_override:
+            category = parsed.category_override
+        elif parsed.is_package:
+            # Packages are split into food/beverage/resource, so they don't need a section
+            category = "food"  # Base category (will be overridden by split)
+        elif current_section is None:
+            # Skip lines without override if we haven't found a section yet
+            continue
+        else:
+            category = current_section
 
         # Handle package splits (food/beverage/resource)
         if parsed.is_package:
@@ -1129,10 +1140,6 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
             context_line = None  # Reset context on new section
             continue
 
-        # Skip if we haven't found a section yet
-        if current_section is None:
-            continue
-
         # Try to parse the line with trace
         result = parse_line_with_trace(line)
         if result is not None:
@@ -1144,7 +1151,17 @@ def parse_pdf_with_traces(pdf_path: Union[str, Path]) -> ParseResult:
                 item_type = f"{context_line}: {line}"
 
             # Determine category (use override if present)
-            category = parsed.category_override or current_section
+            # Items with category_override or is_package can be processed even before a section is detected
+            if parsed.category_override:
+                category = parsed.category_override
+            elif parsed.is_package:
+                # Packages are split into food/beverage/resource, so they don't need a section
+                category = "food"  # Base category (will be overridden by split)
+            elif current_section is None:
+                # Skip lines without override if we haven't found a section yet
+                continue
+            else:
+                category = current_section
 
             # Handle package splits (food/beverage/resource)
             if parsed.is_package:
@@ -1365,10 +1382,13 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                     continue
 
                 # Determine category (use override if present)
-                # Items with category_override can be processed even before a section is detected
-                # (e.g., venue rentals in the schedule table at the top of the page)
+                # Items with category_override or is_package can be processed even before a section is detected
+                # (e.g., venue rentals in the schedule table, day delegate packages on page 1)
                 if parsed.category_override:
                     category = parsed.category_override
+                elif parsed.is_package:
+                    # Packages are split into food/beverage/resource, so they don't need a section
+                    category = "food"  # Base category (will be overridden by split)
                 elif current_section is None:
                     # Skip lines without override if we haven't found a section yet
                     continue
