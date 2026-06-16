@@ -98,65 +98,298 @@ def render_reconciliation():
 
 
 def render_overview():
-    """Operations workflow overview page."""
+    """Operations workflow overview page - visual flowchart matching hand-drawn diagram."""
     st.title("🏢 Operations Overview")
-    st.write("Interactive workflow diagram showing how teams and processes connect.")
 
     # Load workflow data
     if "workflow_data" not in st.session_state:
         st.session_state.workflow_data = load_workflow()
+    if "selected_node" not in st.session_state:
+        st.session_state.selected_node = None
 
     workflow = st.session_state.workflow_data
 
-    # Sidebar controls
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Workflow Controls")
+    # Custom CSS for flowchart
+    st.markdown("""
+    <style>
+    .flow-node {
+        padding: 10px 15px;
+        border-radius: 8px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 14px;
+        margin: 5px;
+        border: 2px solid #333;
+        display: inline-block;
+        min-width: 100px;
+    }
+    .flow-arrow {
+        font-size: 20px;
+        color: #666;
+        margin: 0 5px;
+    }
+    .flow-arrow-down {
+        font-size: 20px;
+        color: #666;
+        text-align: center;
+    }
+    .flow-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        margin: 10px 0;
+    }
+    .note-badge {
+        font-size: 10px;
+        background: #fff;
+        border-radius: 10px;
+        padding: 2px 6px;
+        margin-top: 4px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Legend
+    st.markdown("**Team Colors:**")
+    legend_html = " ".join([
+        f'<span class="flow-node" style="background-color: {color}; font-size: 12px; padding: 5px 10px;">{TEAM_LABELS[team]}</span>'
+        for team, color in TEAM_COLORS.items()
+    ])
+    st.markdown(f'<div style="margin-bottom: 20px;">{legend_html}</div>', unsafe_allow_html=True)
+
+    st.divider()
+
+    # Helper function to render a node
+    def node_html(node_id, label, team, notes_count=0):
+        color = TEAM_COLORS.get(team, "#D3D3D3")
+        note_badge = f'<div class="note-badge">📝 {notes_count}</div>' if notes_count > 0 else ''
+        return f'<span class="flow-node" style="background-color: {color};">{label}{note_badge}</span>'
+
+    def arrow():
+        return '<span class="flow-arrow">→</span>'
+
+    def arrow_down():
+        return '<div class="flow-arrow-down">↓</div>'
+
+    # ============ VISUAL FLOWCHART LAYOUT ============
+    # This matches the hand-drawn diagram structure
+
+    # --- Section 1: Sales Entry & Initial Flow ---
+    st.markdown("### Sales & Planning Flow")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown("**Left Path: Planning**")
+        # Sales → Initial Event → Delphi
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("sales", "Sales", "other")}
+            {arrow()}
+            {node_html("initial_event", "Initial Event", "planners")}
+            {arrow()}
+            {node_html("delphi", "Delphi", "planners")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+        # Planners ↔ Daily Updates
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("planners", "Planners", "planners")}
+            <span class="flow-arrow">↔</span>
+            {node_html("daily_updates", "Daily/Weekly Updates", "planners")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+        # Export to Final EO
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("export_eo", "Export to Final EO", "planners")}
+            {arrow()}
+            <span style="font-style: italic; color: #666;">to Rapid/Go</span>
+        </div>
+        ''', unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("**Right Path: Operations**")
+        # Rapid/Go → Log → Team
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("rapid_go", "Rapid/Go", "operations")}
+            {arrow()}
+            {node_html("log", "Log", "operations")}
+            {arrow()}
+            {node_html("team", "Team", "operations")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+        # Team outputs
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("linen_orders", "Linen Orders", "operations")}
+            {node_html("packing_sheets", "Packing Sheets", "operations")}
+            {node_html("mobile_doc", "Mobile Doc", "operations")}
+        </div>
+        <div class="flow-row">
+            {node_html("room_flips", "Room Flips", "operations")}
+            {node_html("asset_movement", "Asset Movement", "operations")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- Section 2: Management Flow ---
+    st.markdown("### Management & Rostering")
+
+    st.markdown(f'''
+    <div class="flow-row">
+        {node_html("management", "Management (WBN)", "management")}
+        {arrow()}
+        {node_html("roster_build", "Roster Build", "management")}
+        <span style="margin-left: 10px; color: #666;">(Labour %)</span>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+    st.markdown(f'''
+    <div class="flow-row">
+        {node_html("plan_wtc", "Plan (WTC)", "management")}
+        <span class="flow-arrow">↔</span>
+        {node_html("poa", "POA", "management")}
+    </div>
+    ''', unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- Section 3: Floor Managers / FM Flow ---
+    st.markdown("### Floor Managers & Finance")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("cross_checks", "Cross Checks", "floor_managers")}
+            {arrow()}
+            {node_html("postings", "Postings", "floor_managers")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("fm", "FM", "floor_managers")}
+            <span class="flow-arrow">↔</span>
+            {node_html("opera", "Opera", "floor_managers")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("buildbooks", "Buildbooks", "floor_managers")}
+            {node_html("fix_pay", "Fix Pay", "floor_managers")}
+        </div>
+        <div class="flow-row">
+            {node_html("roster_issues", "Roster Issues", "floor_managers")}
+            {node_html("function_report", "Function Report", "floor_managers")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("**Event Delivery**")
+        st.markdown(f'''
+        <div class="flow-row">
+            {node_html("captains", "Captains", "other")}
+            {arrow()}
+            {node_html("floor_management", "Floor Management", "other")}
+        </div>
+        ''', unsafe_allow_html=True)
+
+        st.markdown("""
+        <div style="margin-left: 20px; margin-top: 10px; color: #666; font-size: 13px;">
+            • Break allocations<br>
+            • Set rooms & bars<br>
+            • etc.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # ============ NODE EDITOR SECTION ============
+    st.markdown("### Edit Workflow Nodes")
 
     # Node selector
-    node_options = {n.id: n.label for n in workflow.nodes}
-    selected_node_id = st.sidebar.selectbox(
-        "Select Node",
-        options=list(node_options.keys()),
-        format_func=lambda x: node_options[x],
-        key="selected_node",
+    node_options = [(n.id, f"{n.label} ({TEAM_LABELS.get(n.team, n.team)})") for n in workflow.nodes]
+    node_ids = [n[0] for n in node_options]
+    node_labels = [n[1] for n in node_options]
+
+    selected_idx = st.selectbox(
+        "Select a node to edit:",
+        range(len(node_ids)),
+        format_func=lambda i: node_labels[i],
+        key="node_editor_select",
     )
 
-    selected_node = workflow.get_node(selected_node_id)
+    selected_node = workflow.get_node(node_ids[selected_idx])
 
     if selected_node:
-        st.sidebar.markdown(f"**Team:** {TEAM_LABELS.get(selected_node.team, selected_node.team)}")
-        st.sidebar.markdown(f"**Description:** {selected_node.description or 'No description'}")
+        col1, col2 = st.columns([1, 1])
 
-        # Notes section
-        st.sidebar.markdown("**Notes:**")
-        if selected_node.notes:
-            for i, note in enumerate(selected_node.notes):
-                st.sidebar.markdown(f"- {note}")
-        else:
-            st.sidebar.caption("No notes yet")
+        with col1:
+            st.markdown(f"**{selected_node.label}**")
+            st.markdown(f"Team: {TEAM_LABELS.get(selected_node.team, selected_node.team)}")
+            st.markdown(f"Description: {selected_node.description or 'No description'}")
 
-        # Add note
-        with st.sidebar.expander("Add Note"):
-            new_note = st.text_area("Note", key="new_note_input", height=80)
-            if st.button("Add Note"):
+            # Show existing notes
+            if selected_node.notes:
+                st.markdown("**Notes:**")
+                for i, note in enumerate(selected_node.notes):
+                    note_col1, note_col2 = st.columns([4, 1])
+                    with note_col1:
+                        st.markdown(f"• {note}")
+                    with note_col2:
+                        if st.button("🗑️", key=f"delete_note_{i}"):
+                            selected_node.notes.pop(i)
+                            save_workflow(workflow)
+                            st.rerun()
+
+        with col2:
+            # Add new note
+            st.markdown("**Add Note:**")
+            new_note = st.text_area("", placeholder="Type your note here...", key="add_note_input", height=100)
+            if st.button("Add Note", key="add_note_btn"):
                 if new_note.strip():
-                    workflow.add_note(selected_node_id, new_note.strip())
+                    workflow.add_note(selected_node.id, new_note.strip())
                     save_workflow(workflow)
-                    st.session_state.workflow_data = workflow
                     st.success("Note added!")
                     st.rerun()
 
-    # Add new node
-    with st.sidebar.expander("Add New Node"):
-        new_id = st.text_input("ID (unique)", key="new_node_id")
-        new_label = st.text_input("Label", key="new_node_label")
-        new_team = st.selectbox(
-            "Team",
-            options=list(TEAM_COLORS.keys()),
-            format_func=lambda x: TEAM_LABELS.get(x, x),
-            key="new_node_team",
-        )
-        new_desc = st.text_area("Description", key="new_node_desc", height=60)
+    # Add new node section
+    with st.expander("➕ Add New Node"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            new_id = st.text_input("Node ID (unique)", key="new_node_id")
+            new_label = st.text_input("Label", key="new_node_label")
+        with col2:
+            new_team = st.selectbox(
+                "Team",
+                options=list(TEAM_COLORS.keys()),
+                format_func=lambda x: TEAM_LABELS.get(x, x),
+                key="new_node_team",
+            )
+        with col3:
+            new_desc = st.text_area("Description", key="new_node_desc", height=100)
 
         if st.button("Create Node"):
             if new_id and new_label:
@@ -168,95 +401,26 @@ def render_overview():
                         label=new_label,
                         team=new_team,
                         description=new_desc,
-                        row=12,  # Add to bottom
-                        col=0,
                     )
                     workflow.add_node(new_node)
                     save_workflow(workflow)
-                    st.session_state.workflow_data = workflow
                     st.success(f"Node '{new_label}' created!")
                     st.rerun()
             else:
                 st.warning("ID and Label are required")
 
-    # Reset to default
-    if st.sidebar.button("Reset to Default"):
-        workflow = get_default_workflow()
-        save_workflow(workflow)
-        st.session_state.workflow_data = workflow
-        st.success("Reset to default workflow")
-        st.rerun()
-
-    # Main content - Legend
-    st.subheader("Team Legend")
-    legend_cols = st.columns(len(TEAM_COLORS))
-    for i, (team_id, color) in enumerate(TEAM_COLORS.items()):
-        with legend_cols[i]:
-            st.markdown(
-                f'<div style="background-color: {color}; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold;">'
-                f'{TEAM_LABELS.get(team_id, team_id)}</div>',
-                unsafe_allow_html=True,
-            )
-
+    # Footer
     st.divider()
-
-    # Display workflow as organized sections by team
-    st.subheader("Workflow Diagram")
-
-    # Group nodes by team
-    nodes_by_team = {}
-    for node in workflow.nodes:
-        if node.team not in nodes_by_team:
-            nodes_by_team[node.team] = []
-        nodes_by_team[node.team].append(node)
-
-    # Display each team's nodes
-    for team_id in TEAM_COLORS.keys():
-        if team_id not in nodes_by_team:
-            continue
-
-        team_nodes = nodes_by_team[team_id]
-        color = TEAM_COLORS[team_id]
-
-        with st.expander(f"**{TEAM_LABELS.get(team_id, team_id)}** ({len(team_nodes)} nodes)", expanded=True):
-            # Display nodes in a grid
-            cols_per_row = 4
-            for i in range(0, len(team_nodes), cols_per_row):
-                cols = st.columns(cols_per_row)
-                for j, col in enumerate(cols):
-                    if i + j < len(team_nodes):
-                        node = team_nodes[i + j]
-                        with col:
-                            # Node card
-                            is_selected = node.id == selected_node_id
-                            border = "3px solid #333" if is_selected else "1px solid #ccc"
-                            st.markdown(
-                                f'''<div style="
-                                    background-color: {color};
-                                    padding: 12px;
-                                    border-radius: 8px;
-                                    border: {border};
-                                    margin-bottom: 8px;
-                                    min-height: 80px;
-                                ">
-                                    <strong>{node.label}</strong>
-                                    <br><small>{node.description[:50]}{"..." if len(node.description) > 50 else ""}</small>
-                                    {f'<br><small>📝 {len(node.notes)} notes</small>' if node.notes else ''}
-                                </div>''',
-                                unsafe_allow_html=True,
-                            )
-
-                            # Show connections if any
-                            if node.connections:
-                                conn_labels = [
-                                    workflow.get_node(c).label if workflow.get_node(c) else c
-                                    for c in node.connections
-                                ]
-                                st.caption(f"→ {', '.join(conn_labels)}")
-
-    # Footer with metadata
-    st.divider()
-    st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'}")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'}")
+    with col2:
+        if st.button("Reset to Default"):
+            workflow = get_default_workflow()
+            save_workflow(workflow)
+            st.session_state.workflow_data = workflow
+            st.success("Reset!")
+            st.rerun()
 
 
 def render_step_1_upload():
