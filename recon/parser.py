@@ -948,6 +948,19 @@ def _detect_section(text: str) -> Optional[str]:
                 return category
             continue
 
+        # "audio visual" requires special handling - skip contact info lines
+        if marker == "audio visual":
+            # Skip if it's a contact line (contains phone numbers, colons with names, etc.)
+            if ":" in text and any(c.isdigit() for c in text):
+                continue
+            # Skip if followed by contact info patterns
+            if re.search(r"audio\s*visual\s*[:\-]\s*\w", text_lower):
+                continue
+            # Only match standalone "AUDIO VISUAL" header
+            if text_lower.strip() in ["audio visual", "audio visual:"]:
+                return category
+            continue
+
         # For other markers, check if they appear prominently
         if text_lower.startswith(marker):
             return category
