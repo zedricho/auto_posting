@@ -23,6 +23,10 @@ def _extract_column_text(page) -> str:
     interleaves content from both columns. This function detects columns
     and extracts left column fully first, then right column, so section
     headers stay with their content.
+
+    IMPORTANT: Full-width table rows (like package pricing tables) are kept
+    together even in two-column mode, so "Package Name 500 $115.00" stays
+    as one line instead of being split.
     """
     words = page.extract_words()
     if not words:
@@ -47,6 +51,40 @@ def _extract_column_text(page) -> str:
     if not is_two_column:
         return page.extract_text() or ""
 
+    # Group all words by line (same vertical position)
+    line_tolerance = 5
+    lines_by_top = {}
+    for word in words:
+        # Find existing line within tolerance
+        found_top = None
+        for existing_top in lines_by_top:
+            if abs(word['top'] - existing_top) <= line_tolerance:
+                found_top = existing_top
+                break
+        if found_top is None:
+            found_top = word['top']
+            lines_by_top[found_top] = []
+        lines_by_top[found_top].append(word)
+
+    # Identify full-width table rows (spans both columns with pricing patterns)
+    # These should be kept as single lines, not split by column
+    full_width_lines = set()
+    for top, line_words in lines_by_top.items():
+        if len(line_words) < 2:
+            continue
+        # Check if line spans from left side to right side
+        min_x = min(w['x0'] for w in line_words)
+        max_x = max(w['x1'] for w in line_words)
+        # Line spans most of the page width (from first 1/3 to last 1/3)
+        spans_width = min_x < page_width * 0.33 and max_x > page_width * 0.67
+        # Contains pricing pattern ($ symbol)
+        has_price = any('$' in w['text'] for w in line_words)
+        # Contains a quantity (3+ digit number common for pax counts)
+        has_qty = any(w['text'].isdigit() and len(w['text']) >= 2 for w in line_words)
+
+        if spans_width and has_price and has_qty:
+            full_width_lines.add(top)
+
     def reconstruct_text(word_list):
         """Reconstruct text from words, grouping by line."""
         if not word_list:
@@ -58,7 +96,6 @@ def _extract_column_text(page) -> str:
         lines = []
         current_line = []
         current_top = None
-        line_tolerance = 5  # Words within 5 pts vertically are same line
 
         for word in word_list:
             if current_top is None or abs(word['top'] - current_top) <= line_tolerance:
@@ -78,12 +115,30 @@ def _extract_column_text(page) -> str:
 
         return '\n'.join(lines)
 
-    # Extract left column first, then right column
-    left_text = reconstruct_text(left_words)
-    right_text = reconstruct_text(right_words)
+    # Build full-width lines text (kept together)
+    full_width_words = []
+    for top in full_width_lines:
+        full_width_words.extend(lines_by_top[top])
+    full_width_text = reconstruct_text(full_width_words) if full_width_words else ""
 
-    # Combine: left column content, then right column content
-    return left_text + "\n\n" + right_text
+    # Filter out full-width words from column processing
+    left_words_filtered = [w for w in left_words if not any(
+        abs(w['top'] - fwt) <= line_tolerance for fwt in full_width_lines
+    )]
+    right_words_filtered = [w for w in right_words if not any(
+        abs(w['top'] - fwt) <= line_tolerance for fwt in full_width_lines
+    )]
+
+    # Extract left column first, then right column
+    left_text = reconstruct_text(left_words_filtered)
+    right_text = reconstruct_text(right_words_filtered)
+
+    # Combine: left column, right column, then full-width rows
+    result = left_text + "\n\n" + right_text
+    if full_width_text:
+        result += "\n\n" + full_width_text
+
+    return result
 
 
 @dataclass
