@@ -7,12 +7,14 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from recon.parser import parse_pdf, parse_pdf_with_traces, parse_pdf_multiday, ParseResult, EventDay
+from recon.parser import parse_pdf_multiday
 from recon.builder import compute_totals, generate_excel
 from recon.delphi_adapter import parse_delphi_report
 from recon.reconciler import reconcile
-from recon.feedback import FeedbackEntry, FeedbackLog, export_feedback_json
-from recon.models import MatchTrace
+from recon.workflow import (
+    load_workflow, save_workflow, get_default_workflow,
+    WorkflowNode, WorkflowData, TEAM_COLORS, TEAM_LABELS,
+)
 
 
 def check_password() -> bool:
@@ -48,14 +50,14 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["Reconciliation", "Parser Testing"],
+        ["Overview", "Reconciliation"],
         label_visibility="collapsed",
     )
 
-    if page == "Reconciliation":
-        render_reconciliation()
+    if page == "Overview":
+        render_overview()
     else:
-        render_parser_testing()
+        render_reconciliation()
 
 
 def render_reconciliation():
@@ -95,161 +97,166 @@ def render_reconciliation():
         render_step_4_reconcile()
 
 
-def render_parser_testing():
-    """Parser testing page for refining extraction patterns."""
-    st.title("🔬 Parser Testing")
-    st.write("Upload EO PDFs to see detailed extraction traces and provide feedback.")
+def render_overview():
+    """Operations workflow overview page."""
+    st.title("🏢 Operations Overview")
+    st.write("Interactive workflow diagram showing how teams and processes connect.")
 
-    # Initialize parser testing session state
-    if "pt_result" not in st.session_state:
-        st.session_state.pt_result = None
-    if "pt_pdf_name" not in st.session_state:
-        st.session_state.pt_pdf_name = None
-    if "pt_feedback_log" not in st.session_state:
-        st.session_state.pt_feedback_log = FeedbackLog()
-    if "pt_notes" not in st.session_state:
-        st.session_state.pt_notes = {}
+    # Load workflow data
+    if "workflow_data" not in st.session_state:
+        st.session_state.workflow_data = load_workflow()
 
-    # Show feedback log status
-    log = st.session_state.pt_feedback_log
-    if log.entries:
-        st.sidebar.markdown("---")
-        st.sidebar.markdown(f"**Feedback Log:** {len(log.entries)} entries")
-        st.sidebar.markdown(f"PDFs: {', '.join(log.get_pdf_names())}")
+    workflow = st.session_state.workflow_data
 
-    # Upload section
-    st.subheader("1. Upload PDF")
-    uploaded_file = st.file_uploader("Choose an EO PDF", type=["pdf"], key="pt_uploader")
+    # Sidebar controls
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Workflow Controls")
 
-    if uploaded_file is not None:
-        if st.button("Extract with Traces"):
-            with st.spinner("Extracting..."):
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-                    tmp.write(uploaded_file.read())
-                    tmp_path = tmp.name
+    # Node selector
+    node_options = {n.id: n.label for n in workflow.nodes}
+    selected_node_id = st.sidebar.selectbox(
+        "Select Node",
+        options=list(node_options.keys()),
+        format_func=lambda x: node_options[x],
+        key="selected_node",
+    )
 
-                try:
-                    result = parse_pdf_with_traces(tmp_path)
-                    st.session_state.pt_result = result
-                    st.session_state.pt_pdf_name = uploaded_file.name
-                    st.session_state.pt_notes = {}  # Reset notes for new PDF
-                    st.success(f"Extracted {len(result.matched_lines)} matched lines, {len(result.unmatched_lines)} unmatched")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                finally:
-                    os.unlink(tmp_path)
+    selected_node = workflow.get_node(selected_node_id)
 
-    # Show results if available
-    if st.session_state.pt_result is not None:
-        result = st.session_state.pt_result
-        pdf_name = st.session_state.pt_pdf_name
+    if selected_node:
+        st.sidebar.markdown(f"**Team:** {TEAM_LABELS.get(selected_node.team, selected_node.team)}")
+        st.sidebar.markdown(f"**Description:** {selected_node.description or 'No description'}")
 
-        # Event info
-        st.divider()
-        event = result.event_order
-        st.subheader("Event Details")
-        cols = st.columns(3)
-        cols[0].metric("PM#", event.pm_number or "—")
-        cols[1].metric("BEO#", event.beo_number or "—")
-        cols[2].metric("Event", event.event_name or "—")
+        # Notes section
+        st.sidebar.markdown("**Notes:**")
+        if selected_node.notes:
+            for i, note in enumerate(selected_node.notes):
+                st.sidebar.markdown(f"- {note}")
+        else:
+            st.sidebar.caption("No notes yet")
 
-        # Matched lines table
-        st.divider()
-        st.subheader(f"2. Matched Lines ({len(result.matched_lines)})")
-
-        for i, (raw_text, parsed, trace) in enumerate(result.matched_lines):
-            with st.expander(f"**{parsed.description[:60]}...**" if len(parsed.description) > 60 else f"**{parsed.description}**"):
-                col1, col2 = st.columns([2, 1])
-                with col1:
-                    st.markdown(f"**Pattern:** `{trace.pattern_name}`")
-                    st.markdown(f"**Matched:** `{trace.matched_text}`")
-                    st.markdown(f"**Extracted:** `{trace.extracted}`")
-                    st.markdown(f"**Calculation:** {trace.calculation}")
-                    st.markdown(f"**Value:** ${trace.value:,.2f}")
-                    st.markdown(f"**Category:** {parsed.description}")
-                with col2:
-                    note_key = f"matched_{i}"
-                    note = st.text_area(
-                        "Feedback note",
-                        value=st.session_state.pt_notes.get(note_key, ""),
-                        key=f"note_{note_key}",
-                        height=100,
-                    )
-                    st.session_state.pt_notes[note_key] = note
-
-        # Unmatched lines
-        if result.unmatched_lines:
-            st.divider()
-            st.subheader(f"3. Unmatched Lines ({len(result.unmatched_lines)})")
-            st.warning("These lines look like they might contain pricing but didn't match any pattern.")
-
-            for i, line in enumerate(result.unmatched_lines):
-                with st.expander(f"**{line[:60]}...**" if len(line) > 60 else f"**{line}**"):
-                    st.code(line)
-                    note_key = f"unmatched_{i}"
-                    note = st.text_area(
-                        "What should this be?",
-                        value=st.session_state.pt_notes.get(note_key, ""),
-                        key=f"note_{note_key}",
-                        height=100,
-                    )
-                    st.session_state.pt_notes[note_key] = note
-
-        # Actions
-        st.divider()
-        st.subheader("4. Actions")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            if st.button("Add to Feedback Log"):
-                # Add matched lines with notes
-                for i, (raw_text, parsed, trace) in enumerate(result.matched_lines):
-                    note = st.session_state.pt_notes.get(f"matched_{i}", "")
-                    if note:  # Only add if there's a note
-                        entry = FeedbackEntry(
-                            pdf_name=pdf_name,
-                            line_text=raw_text,
-                            match_trace=trace,
-                            category=parsed.basis,
-                            note=note,
-                            timestamp=datetime.now().isoformat(),
-                        )
-                        log.add(entry)
-
-                # Add unmatched lines with notes
-                for i, line in enumerate(result.unmatched_lines):
-                    note = st.session_state.pt_notes.get(f"unmatched_{i}", "")
-                    if note:  # Only add if there's a note
-                        entry = FeedbackEntry(
-                            pdf_name=pdf_name,
-                            line_text=line,
-                            match_trace=None,
-                            category=None,
-                            note=note,
-                            timestamp=datetime.now().isoformat(),
-                        )
-                        log.add(entry)
-
-                st.success(f"Added to log. Total entries: {len(log.entries)}")
-                st.rerun()
-
-        with col2:
-            if log.entries:
-                json_data = export_feedback_json(log)
-                st.download_button(
-                    f"Download Feedback ({len(log.entries)} entries)",
-                    data=json_data,
-                    file_name=f"parser_feedback_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json",
-                )
-
-        with col3:
-            if log.entries:
-                if st.button("Clear Log"):
-                    log.clear()
-                    st.success("Log cleared")
+        # Add note
+        with st.sidebar.expander("Add Note"):
+            new_note = st.text_area("Note", key="new_note_input", height=80)
+            if st.button("Add Note"):
+                if new_note.strip():
+                    workflow.add_note(selected_node_id, new_note.strip())
+                    save_workflow(workflow)
+                    st.session_state.workflow_data = workflow
+                    st.success("Note added!")
                     st.rerun()
+
+    # Add new node
+    with st.sidebar.expander("Add New Node"):
+        new_id = st.text_input("ID (unique)", key="new_node_id")
+        new_label = st.text_input("Label", key="new_node_label")
+        new_team = st.selectbox(
+            "Team",
+            options=list(TEAM_COLORS.keys()),
+            format_func=lambda x: TEAM_LABELS.get(x, x),
+            key="new_node_team",
+        )
+        new_desc = st.text_area("Description", key="new_node_desc", height=60)
+
+        if st.button("Create Node"):
+            if new_id and new_label:
+                if workflow.get_node(new_id):
+                    st.error("Node ID already exists")
+                else:
+                    new_node = WorkflowNode(
+                        id=new_id,
+                        label=new_label,
+                        team=new_team,
+                        description=new_desc,
+                        row=12,  # Add to bottom
+                        col=0,
+                    )
+                    workflow.add_node(new_node)
+                    save_workflow(workflow)
+                    st.session_state.workflow_data = workflow
+                    st.success(f"Node '{new_label}' created!")
+                    st.rerun()
+            else:
+                st.warning("ID and Label are required")
+
+    # Reset to default
+    if st.sidebar.button("Reset to Default"):
+        workflow = get_default_workflow()
+        save_workflow(workflow)
+        st.session_state.workflow_data = workflow
+        st.success("Reset to default workflow")
+        st.rerun()
+
+    # Main content - Legend
+    st.subheader("Team Legend")
+    legend_cols = st.columns(len(TEAM_COLORS))
+    for i, (team_id, color) in enumerate(TEAM_COLORS.items()):
+        with legend_cols[i]:
+            st.markdown(
+                f'<div style="background-color: {color}; padding: 8px; border-radius: 4px; text-align: center; font-weight: bold;">'
+                f'{TEAM_LABELS.get(team_id, team_id)}</div>',
+                unsafe_allow_html=True,
+            )
+
+    st.divider()
+
+    # Display workflow as organized sections by team
+    st.subheader("Workflow Diagram")
+
+    # Group nodes by team
+    nodes_by_team = {}
+    for node in workflow.nodes:
+        if node.team not in nodes_by_team:
+            nodes_by_team[node.team] = []
+        nodes_by_team[node.team].append(node)
+
+    # Display each team's nodes
+    for team_id in TEAM_COLORS.keys():
+        if team_id not in nodes_by_team:
+            continue
+
+        team_nodes = nodes_by_team[team_id]
+        color = TEAM_COLORS[team_id]
+
+        with st.expander(f"**{TEAM_LABELS.get(team_id, team_id)}** ({len(team_nodes)} nodes)", expanded=True):
+            # Display nodes in a grid
+            cols_per_row = 4
+            for i in range(0, len(team_nodes), cols_per_row):
+                cols = st.columns(cols_per_row)
+                for j, col in enumerate(cols):
+                    if i + j < len(team_nodes):
+                        node = team_nodes[i + j]
+                        with col:
+                            # Node card
+                            is_selected = node.id == selected_node_id
+                            border = "3px solid #333" if is_selected else "1px solid #ccc"
+                            st.markdown(
+                                f'''<div style="
+                                    background-color: {color};
+                                    padding: 12px;
+                                    border-radius: 8px;
+                                    border: {border};
+                                    margin-bottom: 8px;
+                                    min-height: 80px;
+                                ">
+                                    <strong>{node.label}</strong>
+                                    <br><small>{node.description[:50]}{"..." if len(node.description) > 50 else ""}</small>
+                                    {f'<br><small>📝 {len(node.notes)} notes</small>' if node.notes else ''}
+                                </div>''',
+                                unsafe_allow_html=True,
+                            )
+
+                            # Show connections if any
+                            if node.connections:
+                                conn_labels = [
+                                    workflow.get_node(c).label if workflow.get_node(c) else c
+                                    for c in node.connections
+                                ]
+                                st.caption(f"→ {', '.join(conn_labels)}")
+
+    # Footer with metadata
+    st.divider()
+    st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'}")
 
 
 def render_step_1_upload():

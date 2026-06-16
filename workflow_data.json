@@ -1,0 +1,325 @@
+{
+  "nodes": [
+    {
+      "id": "sales",
+      "label": "Sales",
+      "team": "other",
+      "description": "Initial client contact and event booking",
+      "notes": [],
+      "row": 0,
+      "col": 0,
+      "connections": [
+        "initial_event"
+      ]
+    },
+    {
+      "id": "initial_event",
+      "label": "Initial Event",
+      "team": "planners",
+      "description": "New event created in system",
+      "notes": [],
+      "row": 1,
+      "col": 0,
+      "connections": [
+        "delphi"
+      ]
+    },
+    {
+      "id": "rapid_go",
+      "label": "Rapid/Go",
+      "team": "operations",
+      "description": "Rapid/Go system for event management",
+      "notes": [],
+      "row": 1,
+      "col": 3,
+      "connections": [
+        "log",
+        "linen_orders"
+      ]
+    },
+    {
+      "id": "delphi",
+      "label": "Delphi",
+      "team": "planners",
+      "description": "Delphi event management system",
+      "notes": [],
+      "row": 2,
+      "col": 0,
+      "connections": [
+        "planners",
+        "daily_updates"
+      ]
+    },
+    {
+      "id": "log",
+      "label": "Log",
+      "team": "operations",
+      "description": "Event logging and tracking",
+      "notes": [],
+      "row": 2,
+      "col": 3,
+      "connections": [
+        "team"
+      ]
+    },
+    {
+      "id": "linen_orders",
+      "label": "Linen Orders",
+      "team": "operations",
+      "description": "Linen and fabric requirements",
+      "notes": [],
+      "row": 2,
+      "col": 4,
+      "connections": []
+    },
+    {
+      "id": "mobile_doc",
+      "label": "Mobile Doc",
+      "team": "operations",
+      "description": "Mobile documentation system",
+      "notes": [],
+      "row": 2,
+      "col": 5,
+      "connections": []
+    },
+    {
+      "id": "planners",
+      "label": "Planners",
+      "team": "planners",
+      "description": "Event planning team - add info to events",
+      "notes": [],
+      "row": 3,
+      "col": 0,
+      "connections": [
+        "export_eo"
+      ]
+    },
+    {
+      "id": "daily_updates",
+      "label": "Daily/Weekly Updates",
+      "team": "planners",
+      "description": "Regular updates and communications",
+      "notes": [],
+      "row": 3,
+      "col": 1,
+      "connections": []
+    },
+    {
+      "id": "team",
+      "label": "Team",
+      "team": "operations",
+      "description": "Operations team coordination",
+      "notes": [],
+      "row": 3,
+      "col": 3,
+      "connections": [
+        "packing_sheets",
+        "room_flips",
+        "asset_movement"
+      ]
+    },
+    {
+      "id": "export_eo",
+      "label": "Export to Final EO",
+      "team": "planners",
+      "description": "Export finalized Event Order",
+      "notes": [],
+      "row": 4,
+      "col": 0,
+      "connections": [
+        "rapid_go"
+      ]
+    },
+    {
+      "id": "packing_sheets",
+      "label": "Packing Sheets",
+      "team": "operations",
+      "description": "Equipment and supplies packing lists",
+      "notes": [],
+      "row": 4,
+      "col": 3,
+      "connections": []
+    },
+    {
+      "id": "room_flips",
+      "label": "Room Flips",
+      "team": "operations",
+      "description": "Room setup changes between events",
+      "notes": [],
+      "row": 4,
+      "col": 4,
+      "connections": []
+    },
+    {
+      "id": "asset_movement",
+      "label": "Asset Movement",
+      "team": "operations",
+      "description": "Equipment and furniture logistics",
+      "notes": [],
+      "row": 4,
+      "col": 5,
+      "connections": []
+    },
+    {
+      "id": "management",
+      "label": "Management (WBN)",
+      "team": "management",
+      "description": "Management oversight via WBN",
+      "notes": [],
+      "row": 5,
+      "col": 1,
+      "connections": [
+        "roster_build"
+      ]
+    },
+    {
+      "id": "roster_build",
+      "label": "Roster Build",
+      "team": "management",
+      "description": "Staff rostering and labour percentage planning",
+      "notes": [],
+      "row": 6,
+      "col": 1,
+      "connections": [
+        "plan_wtc"
+      ]
+    },
+    {
+      "id": "cross_checks",
+      "label": "Cross Checks",
+      "team": "floor_managers",
+      "description": "Verification and cross-checking processes",
+      "notes": [],
+      "row": 6,
+      "col": 0,
+      "connections": [
+        "postings"
+      ]
+    },
+    {
+      "id": "plan_wtc",
+      "label": "Plan (WTC)",
+      "team": "management",
+      "description": "Workforce planning via WTC",
+      "notes": [],
+      "row": 7,
+      "col": 1,
+      "connections": [
+        "poa"
+      ]
+    },
+    {
+      "id": "postings",
+      "label": "Postings",
+      "team": "floor_managers",
+      "description": "Financial postings and allocations",
+      "notes": [],
+      "row": 7,
+      "col": 0,
+      "connections": [
+        "fm"
+      ]
+    },
+    {
+      "id": "poa",
+      "label": "POA",
+      "team": "management",
+      "description": "Plan of Action coordination",
+      "notes": [],
+      "row": 7,
+      "col": 2,
+      "connections": []
+    },
+    {
+      "id": "fm",
+      "label": "FM",
+      "team": "floor_managers",
+      "description": "Floor Managers - oversee event delivery",
+      "notes": [],
+      "row": 8,
+      "col": 1,
+      "connections": [
+        "buildbooks",
+        "fix_pay",
+        "roster_issues",
+        "function_report"
+      ]
+    },
+    {
+      "id": "buildbooks",
+      "label": "Buildbooks/Reallocations",
+      "team": "floor_managers",
+      "description": "Event buildbooks and resource reallocations",
+      "notes": [],
+      "row": 9,
+      "col": 0,
+      "connections": []
+    },
+    {
+      "id": "fix_pay",
+      "label": "Fix Pay Issues",
+      "team": "floor_managers",
+      "description": "Payroll corrections and adjustments",
+      "notes": [],
+      "row": 9,
+      "col": 1,
+      "connections": []
+    },
+    {
+      "id": "roster_issues",
+      "label": "Roster Issues",
+      "team": "floor_managers",
+      "description": "Staff roster problems and solutions",
+      "notes": [],
+      "row": 9,
+      "col": 2,
+      "connections": []
+    },
+    {
+      "id": "function_report",
+      "label": "Function Report",
+      "team": "floor_managers",
+      "description": "Post-event function reporting",
+      "notes": [],
+      "row": 9,
+      "col": 3,
+      "connections": [
+        "captains"
+      ]
+    },
+    {
+      "id": "opera",
+      "label": "Opera",
+      "team": "floor_managers",
+      "description": "Opera PMS integration",
+      "notes": [],
+      "row": 10,
+      "col": 0,
+      "connections": []
+    },
+    {
+      "id": "captains",
+      "label": "Captains",
+      "team": "other",
+      "description": "Event captains and team leads",
+      "notes": [],
+      "row": 10,
+      "col": 3,
+      "connections": [
+        "floor_management"
+      ]
+    },
+    {
+      "id": "floor_management",
+      "label": "Floor Management",
+      "team": "other",
+      "description": "Break allocations, set rooms & bars, etc.",
+      "notes": [],
+      "row": 11,
+      "col": 3,
+      "connections": []
+    }
+  ],
+  "last_updated": "2026-06-16T14:50:41.179839",
+  "version": "1.0"
+}
