@@ -898,7 +898,7 @@ SECTION_MARKERS = {
     "security": "other",
     "venue hire": "venue_hire",
     "minimum spend": "venue_hire",
-    "audio visual": "av",
+    "audio visual": "resource",  # AV equipment goes to resource
 }
 
 
