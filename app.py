@@ -13,7 +13,7 @@ from recon.delphi_adapter import parse_delphi_report
 from recon.reconciler import reconcile
 from recon.workflow import (
     load_workflow, save_workflow, get_default_workflow,
-    WorkflowNode, WorkflowData, TEAM_COLORS, TEAM_LABELS,
+    WorkflowNode, WorkflowData, TEAM_COLORS, TEAM_COLORS_DARK, TEAM_LABELS,
 )
 
 
@@ -98,300 +98,316 @@ def render_reconciliation():
 
 
 def render_overview():
-    """Operations workflow overview page - visual flowchart matching hand-drawn diagram."""
+    """Operations workflow overview page - visual flowchart with clickable nodes."""
     st.title("🏢 Operations Overview")
 
     # Load workflow data
     if "workflow_data" not in st.session_state:
         st.session_state.workflow_data = load_workflow()
-    if "selected_node" not in st.session_state:
-        st.session_state.selected_node = None
+    if "editing_node" not in st.session_state:
+        st.session_state.editing_node = None
 
     workflow = st.session_state.workflow_data
 
     # Custom CSS for flowchart
     st.markdown("""
     <style>
+    .flow-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 15px 0;
+    }
     .flow-node {
-        padding: 10px 15px;
-        border-radius: 8px;
+        padding: 12px 18px;
+        border-radius: 10px;
         text-align: center;
         font-weight: bold;
         font-size: 14px;
-        margin: 5px;
         border: 2px solid #333;
-        display: inline-block;
-        min-width: 100px;
+        cursor: pointer;
+        transition: transform 0.2s, box-shadow 0.2s;
+        min-width: 90px;
+    }
+    .flow-node:hover {
+        transform: scale(1.05);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .flow-node-key {
+        border-width: 3px;
+        font-size: 16px;
+        padding: 14px 20px;
     }
     .flow-arrow {
-        font-size: 20px;
-        color: #666;
-        margin: 0 5px;
+        font-size: 24px;
+        color: #555;
+        margin: 0 8px;
     }
-    .flow-arrow-down {
-        font-size: 20px;
-        color: #666;
-        text-align: center;
+    .flow-section {
+        background: #f8f9fa;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 15px 0;
     }
-    .flow-row {
-        display: flex;
-        align-items: center;
-        justify-content: flex-start;
-        flex-wrap: wrap;
-        margin: 10px 0;
-    }
-    .note-badge {
-        font-size: 10px;
-        background: #fff;
+    .note-count {
+        font-size: 11px;
+        background: rgba(255,255,255,0.8);
         border-radius: 10px;
-        padding: 2px 6px;
-        margin-top: 4px;
+        padding: 2px 8px;
+        margin-top: 5px;
+        display: inline-block;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # Legend
-    st.markdown("**Team Colors:**")
-    legend_html = " ".join([
-        f'<span class="flow-node" style="background-color: {color}; font-size: 12px; padding: 5px 10px;">{TEAM_LABELS[team]}</span>'
-        for team, color in TEAM_COLORS.items()
-    ])
-    st.markdown(f'<div style="margin-bottom: 20px;">{legend_html}</div>', unsafe_allow_html=True)
+    # Legend with team colors
+    st.markdown("##### Team Legend")
+    legend_cols = st.columns(5)
+    for i, (team, color) in enumerate(TEAM_COLORS.items()):
+        dark_color = TEAM_COLORS_DARK[team]
+        with legend_cols[i]:
+            st.markdown(
+                f'<div style="background: linear-gradient(135deg, {dark_color} 0%, {color} 100%); '
+                f'padding: 8px 12px; border-radius: 8px; text-align: center; font-weight: bold; '
+                f'border: 2px solid #333; font-size: 12px;">{TEAM_LABELS[team]}</div>',
+                unsafe_allow_html=True
+            )
 
     st.divider()
 
-    # Helper function to render a node
-    def node_html(node_id, label, team, notes_count=0):
-        color = TEAM_COLORS.get(team, "#D3D3D3")
-        note_badge = f'<div class="note-badge">📝 {notes_count}</div>' if notes_count > 0 else ''
-        return f'<span class="flow-node" style="background-color: {color};">{label}{note_badge}</span>'
+    # Helper to get node color
+    def get_node_color(node):
+        if node.is_key_member:
+            return TEAM_COLORS_DARK.get(node.team, "#A9A9A9")
+        return TEAM_COLORS.get(node.team, "#D3D3D3")
 
-    def arrow():
-        return '<span class="flow-arrow">→</span>'
+    # Helper to render clickable node button
+    def render_node_button(node_id, col=None):
+        node = workflow.get_node(node_id)
+        if not node:
+            return
+        container = col if col else st
+        color = get_node_color(node)
+        is_key = node.is_key_member
+        notes_text = f" 📝{len(node.notes)}" if node.notes else ""
 
-    def arrow_down():
-        return '<div class="flow-arrow-down">↓</div>'
+        # Use a button styled to look like a node
+        btn_label = f"{node.label}{notes_text}"
+        if container.button(btn_label, key=f"node_btn_{node_id}", use_container_width=False):
+            st.session_state.editing_node = node_id
+            st.rerun()
 
-    # ============ VISUAL FLOWCHART LAYOUT ============
-    # This matches the hand-drawn diagram structure
+    # ============ INTERCONNECTED FLOWCHART ============
 
-    # --- Section 1: Sales Entry & Initial Flow ---
-    st.markdown("### Sales & Planning Flow")
+    # --- SECTION 1: Sales & Planning (Left) + Operations (Right) ---
+    st.markdown("### 📋 Sales, Planning & Operations")
 
-    col1, col2 = st.columns([1, 1])
+    main_col1, arrow_col, main_col2 = st.columns([2, 0.3, 2])
 
-    with col1:
-        st.markdown("**Left Path: Planning**")
-        # Sales → Initial Event → Delphi
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("sales", "Sales", "other")}
-            {arrow()}
-            {node_html("initial_event", "Initial Event", "planners")}
-            {arrow()}
-            {node_html("delphi", "Delphi", "planners")}
-        </div>
-        ''', unsafe_allow_html=True)
+    with main_col1:
+        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
+        st.markdown("**Planning Path**")
 
-        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+        # Row 1: Sales
+        c1, c2, c3 = st.columns([1, 0.3, 1])
+        render_node_button("sales", c1)
+        c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
+        render_node_button("initial_event", c3)
 
-        # Planners ↔ Daily Updates
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("planners", "Planners", "planners")}
-            <span class="flow-arrow">↔</span>
-            {node_html("daily_updates", "Daily/Weekly Updates", "planners")}
-        </div>
-        ''', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+        # Row 2: Delphi
+        c1, c2, c3 = st.columns([1, 0.3, 1])
+        render_node_button("delphi", c1)
+        c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
+        render_node_button("daily_updates", c3)
 
-        # Export to Final EO
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("export_eo", "Export to Final EO", "planners")}
-            {arrow()}
-            <span style="font-style: italic; color: #666;">to Rapid/Go</span>
-        </div>
-        ''', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-    with col2:
-        st.markdown("**Right Path: Operations**")
-        # Rapid/Go → Log → Team
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("rapid_go", "Rapid/Go", "operations")}
-            {arrow()}
-            {node_html("log", "Log", "operations")}
-            {arrow()}
-            {node_html("team", "Team", "operations")}
-        </div>
-        ''', unsafe_allow_html=True)
+        # Row 3: Planners (KEY)
+        render_node_button("planners")
 
-        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-        # Team outputs
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("linen_orders", "Linen Orders", "operations")}
-            {node_html("packing_sheets", "Packing Sheets", "operations")}
-            {node_html("mobile_doc", "Mobile Doc", "operations")}
-        </div>
-        <div class="flow-row">
-            {node_html("room_flips", "Room Flips", "operations")}
-            {node_html("asset_movement", "Asset Movement", "operations")}
-        </div>
-        ''', unsafe_allow_html=True)
+        # Row 4: Export
+        render_node_button("export_eo")
 
-    st.divider()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- Section 2: Management Flow ---
-    st.markdown("### Management & Rostering")
+    with arrow_col:
+        st.markdown('<p style="text-align:center; font-size:30px; margin-top:150px;">→</p>', unsafe_allow_html=True)
 
-    st.markdown(f'''
-    <div class="flow-row">
-        {node_html("management", "Management (WBN)", "management")}
-        {arrow()}
-        {node_html("roster_build", "Roster Build", "management")}
-        <span style="margin-left: 10px; color: #666;">(Labour %)</span>
-    </div>
-    ''', unsafe_allow_html=True)
+    with main_col2:
+        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
+        st.markdown("**Operations Path**")
 
-    st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+        # Row 1: Rapid/Go
+        render_node_button("rapid_go")
 
-    st.markdown(f'''
-    <div class="flow-row">
-        {node_html("plan_wtc", "Plan (WTC)", "management")}
-        <span class="flow-arrow">↔</span>
-        {node_html("poa", "POA", "management")}
-    </div>
-    ''', unsafe_allow_html=True)
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-    st.divider()
+        # Row 2: Log Team (KEY) + Linen/Mobile
+        c1, c2, c3 = st.columns(3)
+        render_node_button("log_team", c1)
+        render_node_button("linen_orders", c2)
+        render_node_button("mobile_doc", c3)
 
-    # --- Section 3: Floor Managers / FM Flow ---
-    st.markdown("### Floor Managers & Finance")
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-    col1, col2 = st.columns([1, 1])
+        # Row 3: Outputs
+        c1, c2, c3 = st.columns(3)
+        render_node_button("packing_sheets", c1)
+        render_node_button("room_flips", c2)
+        render_node_button("asset_movement", c3)
 
-    with col1:
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("cross_checks", "Cross Checks", "floor_managers")}
-            {arrow()}
-            {node_html("postings", "Postings", "floor_managers")}
-        </div>
-        ''', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+    # --- SECTION 2: Management ---
+    st.markdown("### 👔 Management & Rostering")
 
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("fm", "FM", "floor_managers")}
-            <span class="flow-arrow">↔</span>
-            {node_html("opera", "Opera", "floor_managers")}
-        </div>
-        ''', unsafe_allow_html=True)
+    st.markdown('<div class="flow-section">', unsafe_allow_html=True)
 
-        st.markdown(f'{arrow_down()}', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([1.2, 0.3, 1, 1])
+    render_node_button("management", c1)
+    c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
+    render_node_button("roster_build", c3)
+    c4.markdown('<p style="color:#666; margin-top:10px;">(Labour %)</p>', unsafe_allow_html=True)
 
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("buildbooks", "Buildbooks", "floor_managers")}
-            {node_html("fix_pay", "Fix Pay", "floor_managers")}
-        </div>
-        <div class="flow-row">
-            {node_html("roster_issues", "Roster Issues", "floor_managers")}
-            {node_html("function_report", "Function Report", "floor_managers")}
-        </div>
-        ''', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
 
-    with col2:
+    c1, c2, c3 = st.columns([1, 0.3, 1])
+    render_node_button("plan_wtc", c1)
+    c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
+    render_node_button("poa", c3)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- SECTION 3: Floor Managers ---
+    st.markdown("### 🎯 Floor Managers (FM) & Event Delivery")
+
+    fm_col, delivery_col = st.columns([1.5, 1])
+
+    with fm_col:
+        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
+        st.markdown("**FM Operations**")
+
+        c1, c2, c3 = st.columns([1, 0.3, 1])
+        render_node_button("cross_checks", c1)
+        c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
+        render_node_button("postings", c3)
+
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns([1, 0.3, 1])
+        render_node_button("fm", c1)
+        c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
+        render_node_button("opera", c3)
+
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+
+        c1, c2, c3, c4 = st.columns(4)
+        render_node_button("buildbooks", c1)
+        render_node_button("fix_pay", c2)
+        render_node_button("roster_issues", c3)
+        render_node_button("function_report", c4)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with delivery_col:
+        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
         st.markdown("**Event Delivery**")
-        st.markdown(f'''
-        <div class="flow-row">
-            {node_html("captains", "Captains", "other")}
-            {arrow()}
-            {node_html("floor_management", "Floor Management", "other")}
-        </div>
-        ''', unsafe_allow_html=True)
+
+        render_node_button("captains")
+
+        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+
+        render_node_button("floor_management")
 
         st.markdown("""
-        <div style="margin-left: 20px; margin-top: 10px; color: #666; font-size: 13px;">
+        <div style="margin-top: 15px; color: #666; font-size: 13px; padding: 10px; background: #fff; border-radius: 8px;">
             • Break allocations<br>
             • Set rooms & bars<br>
             • etc.
         </div>
         """, unsafe_allow_html=True)
 
+        st.markdown('</div>', unsafe_allow_html=True)
+
     st.divider()
 
-    # ============ NODE EDITOR SECTION ============
-    st.markdown("### Edit Workflow Nodes")
+    # ============ NODE EDITOR (appears when node is clicked) ============
+    if st.session_state.editing_node:
+        node = workflow.get_node(st.session_state.editing_node)
+        if node:
+            st.markdown(f"### ✏️ Editing: {node.label}")
 
-    # Node selector
-    node_options = [(n.id, f"{n.label} ({TEAM_LABELS.get(n.team, n.team)})") for n in workflow.nodes]
-    node_ids = [n[0] for n in node_options]
-    node_labels = [n[1] for n in node_options]
+            edit_col1, edit_col2 = st.columns([1, 1])
 
-    selected_idx = st.selectbox(
-        "Select a node to edit:",
-        range(len(node_ids)),
-        format_func=lambda i: node_labels[i],
-        key="node_editor_select",
-    )
+            with edit_col1:
+                color = get_node_color(node)
+                st.markdown(
+                    f'<div style="background-color: {color}; padding: 15px; border-radius: 10px; '
+                    f'border: 3px solid #333; margin-bottom: 15px;">'
+                    f'<strong style="font-size: 18px;">{node.label}</strong><br>'
+                    f'<span style="color: #333;">Team: {TEAM_LABELS.get(node.team, node.team)}</span><br>'
+                    f'<span style="color: #555;">{node.description}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True
+                )
 
-    selected_node = workflow.get_node(node_ids[selected_idx])
+                # Existing notes
+                if node.notes:
+                    st.markdown("**Notes:**")
+                    for i, note in enumerate(node.notes):
+                        nc1, nc2 = st.columns([5, 1])
+                        with nc1:
+                            st.markdown(f"📝 {note}")
+                        with nc2:
+                            if st.button("🗑️", key=f"del_note_{node.id}_{i}"):
+                                node.notes.pop(i)
+                                save_workflow(workflow)
+                                st.rerun()
+                else:
+                    st.caption("No notes yet")
 
-    if selected_node:
-        col1, col2 = st.columns([1, 1])
+            with edit_col2:
+                st.markdown("**Add a note:**")
+                new_note = st.text_area("", placeholder="Type your note here...", key="edit_note_input", height=120)
 
-        with col1:
-            st.markdown(f"**{selected_node.label}**")
-            st.markdown(f"Team: {TEAM_LABELS.get(selected_node.team, selected_node.team)}")
-            st.markdown(f"Description: {selected_node.description or 'No description'}")
-
-            # Show existing notes
-            if selected_node.notes:
-                st.markdown("**Notes:**")
-                for i, note in enumerate(selected_node.notes):
-                    note_col1, note_col2 = st.columns([4, 1])
-                    with note_col1:
-                        st.markdown(f"• {note}")
-                    with note_col2:
-                        if st.button("🗑️", key=f"delete_note_{i}"):
-                            selected_node.notes.pop(i)
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    if st.button("💾 Save Note", use_container_width=True):
+                        if new_note.strip():
+                            workflow.add_note(node.id, new_note.strip())
                             save_workflow(workflow)
+                            st.success("Note saved!")
                             st.rerun()
+                with bc2:
+                    if st.button("✖️ Close", use_container_width=True):
+                        st.session_state.editing_node = None
+                        st.rerun()
 
-        with col2:
-            # Add new note
-            st.markdown("**Add Note:**")
-            new_note = st.text_area("", placeholder="Type your note here...", key="add_note_input", height=100)
-            if st.button("Add Note", key="add_note_btn"):
-                if new_note.strip():
-                    workflow.add_note(selected_node.id, new_note.strip())
-                    save_workflow(workflow)
-                    st.success("Note added!")
-                    st.rerun()
+            st.divider()
 
-    # Add new node section
-    with st.expander("➕ Add New Node"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_id = st.text_input("Node ID (unique)", key="new_node_id")
-            new_label = st.text_input("Label", key="new_node_label")
-        with col2:
+    # ============ ADD NEW NODE ============
+    with st.expander("➕ Add New Node to Workflow"):
+        nc1, nc2, nc3 = st.columns(3)
+        with nc1:
+            new_id = st.text_input("Node ID (unique, no spaces)", key="new_node_id")
+            new_label = st.text_input("Display Label", key="new_node_label")
+        with nc2:
             new_team = st.selectbox(
                 "Team",
                 options=list(TEAM_COLORS.keys()),
                 format_func=lambda x: TEAM_LABELS.get(x, x),
                 key="new_node_team",
             )
-        with col3:
+            new_is_key = st.checkbox("Key team member (darker color)", key="new_node_key")
+        with nc3:
             new_desc = st.text_area("Description", key="new_node_desc", height=100)
 
-        if st.button("Create Node"):
+        if st.button("Create Node", use_container_width=False):
             if new_id and new_label:
                 if workflow.get_node(new_id):
                     st.error("Node ID already exists")
@@ -401,6 +417,7 @@ def render_overview():
                         label=new_label,
                         team=new_team,
                         description=new_desc,
+                        is_key_member=new_is_key,
                     )
                     workflow.add_node(new_node)
                     save_workflow(workflow)
@@ -411,14 +428,15 @@ def render_overview():
 
     # Footer
     st.divider()
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'}")
-    with col2:
-        if st.button("Reset to Default"):
+    fc1, fc2 = st.columns([4, 1])
+    with fc1:
+        st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'} | Click any node to edit")
+    with fc2:
+        if st.button("🔄 Reset"):
             workflow = get_default_workflow()
             save_workflow(workflow)
             st.session_state.workflow_data = workflow
+            st.session_state.editing_node = None
             st.success("Reset!")
             st.rerun()
 

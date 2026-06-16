@@ -9,19 +9,36 @@ from typing import List, Optional, Dict, Any
 
 # Team color scheme matching the hand-drawn diagram
 TEAM_COLORS = {
-    "planners": "#FFB6C1",         # Pink - Planning team
-    "operations": "#FFFF99",       # Yellow - Operations/Log team
-    "management": "#90EE90",       # Green - Management team
-    "floor_managers": "#87CEEB",   # Blue - Floor Managers (FM) oversee event delivery
+    "planners": "#FFB6C1",         # Pink - Planners
+    "operations": "#FFFF99",       # Yellow - Log Team
+    "management": "#90EE90",       # Green - Management
+    "floor_managers": "#87CEEB",   # Blue - Floor Managers (FM)
     "other": "#D3D3D3",            # Gray - Other roles
+}
+
+# Darker versions for key team members
+TEAM_COLORS_DARK = {
+    "planners": "#FF91A4",         # Darker Pink
+    "operations": "#FFD700",       # Darker Yellow/Gold
+    "management": "#32CD32",       # Darker Green
+    "floor_managers": "#4A9FD4",   # Darker Blue
+    "other": "#A9A9A9",            # Darker Gray
 }
 
 TEAM_LABELS = {
     "planners": "Planners",
-    "operations": "Operations",
+    "operations": "Log Team",
     "management": "Management",
-    "floor_managers": "Floor Managers",
+    "floor_managers": "Floor Managers (FM)",
     "other": "Other",
+}
+
+# Key team member nodes that should be highlighted darker
+KEY_TEAM_NODES = {
+    "planners": "planners",        # The Planners node
+    "operations": "log_team",      # The Log Team node (renamed from log/team)
+    "management": "management",    # The Management node
+    "floor_managers": "fm",        # The FM node
 }
 
 
@@ -36,12 +53,16 @@ class WorkflowNode:
     row: int = 0  # Grid row position
     col: int = 0  # Grid column position
     connections: List[str] = field(default_factory=list)  # IDs of connected nodes
+    is_key_member: bool = False  # If True, use darker color (key team member)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowNode":
+        # Handle older data without is_key_member
+        if "is_key_member" not in data:
+            data["is_key_member"] = False
         return cls(**data)
 
 
@@ -142,7 +163,7 @@ def save_workflow(data: WorkflowData, filepath: Optional[Path] = None) -> None:
 def get_default_workflow() -> WorkflowData:
     """Create default workflow matching the hand-drawn diagram."""
     nodes = [
-        # Row 0: Top level - Sales entry point
+        # === LEFT SIDE: Sales & Planning ===
         WorkflowNode(
             id="sales",
             label="Sales",
@@ -151,8 +172,6 @@ def get_default_workflow() -> WorkflowData:
             row=0, col=0,
             connections=["initial_event"],
         ),
-
-        # Row 1: Initial processing
         WorkflowNode(
             id="initial_event",
             label="Initial Event",
@@ -162,16 +181,6 @@ def get_default_workflow() -> WorkflowData:
             connections=["delphi"],
         ),
         WorkflowNode(
-            id="rapid_go",
-            label="Rapid/Go",
-            team="operations",
-            description="Rapid/Go system for event management",
-            row=1, col=3,
-            connections=["log", "linen_orders"],
-        ),
-
-        # Row 2: Planning and Operations
-        WorkflowNode(
             id="delphi",
             label="Delphi",
             team="planners",
@@ -180,36 +189,13 @@ def get_default_workflow() -> WorkflowData:
             connections=["planners", "daily_updates"],
         ),
         WorkflowNode(
-            id="log",
-            label="Log",
-            team="operations",
-            description="Event logging and tracking",
-            row=2, col=3,
-            connections=["team"],
-        ),
-        WorkflowNode(
-            id="linen_orders",
-            label="Linen Orders",
-            team="operations",
-            description="Linen and fabric requirements",
-            row=2, col=4,
-        ),
-        WorkflowNode(
-            id="mobile_doc",
-            label="Mobile Doc",
-            team="operations",
-            description="Mobile documentation system",
-            row=2, col=5,
-        ),
-
-        # Row 3: Planners and Team
-        WorkflowNode(
             id="planners",
             label="Planners",
             team="planners",
             description="Event planning team - add info to events",
             row=3, col=0,
             connections=["export_eo"],
+            is_key_member=True,  # Highlighted darker
         ),
         WorkflowNode(
             id="daily_updates",
@@ -217,17 +203,8 @@ def get_default_workflow() -> WorkflowData:
             team="planners",
             description="Regular updates and communications",
             row=3, col=1,
+            connections=["delphi"],
         ),
-        WorkflowNode(
-            id="team",
-            label="Team",
-            team="operations",
-            description="Operations team coordination",
-            row=3, col=3,
-            connections=["packing_sheets", "room_flips", "asset_movement"],
-        ),
-
-        # Row 4: Export and Team outputs
         WorkflowNode(
             id="export_eo",
             label="Export to Final EO",
@@ -236,39 +213,71 @@ def get_default_workflow() -> WorkflowData:
             row=4, col=0,
             connections=["rapid_go"],
         ),
+
+        # === CENTER-RIGHT: Operations / Log Team ===
+        WorkflowNode(
+            id="rapid_go",
+            label="Rapid/Go",
+            team="operations",
+            description="Rapid/Go system for event management",
+            row=1, col=2,
+            connections=["log_team", "linen_orders", "mobile_doc"],
+        ),
+        WorkflowNode(
+            id="log_team",
+            label="Log Team",
+            team="operations",
+            description="Operations logging and team coordination",
+            row=2, col=2,
+            connections=["packing_sheets", "room_flips", "asset_movement"],
+            is_key_member=True,  # Highlighted darker
+        ),
+        WorkflowNode(
+            id="linen_orders",
+            label="Linen Orders",
+            team="operations",
+            description="Linen and fabric requirements",
+            row=2, col=3,
+        ),
+        WorkflowNode(
+            id="mobile_doc",
+            label="Mobile Doc",
+            team="operations",
+            description="Mobile documentation system",
+            row=2, col=4,
+        ),
         WorkflowNode(
             id="packing_sheets",
             label="Packing Sheets",
             team="operations",
             description="Equipment and supplies packing lists",
-            row=4, col=3,
+            row=3, col=2,
         ),
         WorkflowNode(
             id="room_flips",
             label="Room Flips",
             team="operations",
             description="Room setup changes between events",
-            row=4, col=4,
+            row=3, col=3,
         ),
         WorkflowNode(
             id="asset_movement",
             label="Asset Movement",
             team="operations",
             description="Equipment and furniture logistics",
-            row=4, col=5,
+            row=3, col=4,
         ),
 
-        # Row 5: Management
+        # === CENTER: Management ===
         WorkflowNode(
             id="management",
-            label="Management (WBN)",
+            label="Management",
             team="management",
             description="Management oversight via WBN",
             row=5, col=1,
             connections=["roster_build"],
+            is_key_member=True,  # Highlighted darker
         ),
-
-        # Row 6: Roster and Planning
         WorkflowNode(
             id="roster_build",
             label="Roster Build",
@@ -278,30 +287,12 @@ def get_default_workflow() -> WorkflowData:
             connections=["plan_wtc"],
         ),
         WorkflowNode(
-            id="cross_checks",
-            label="Cross Checks",
-            team="floor_managers",
-            description="Verification and cross-checking processes",
-            row=6, col=0,
-            connections=["postings"],
-        ),
-
-        # Row 7: Plan and POA
-        WorkflowNode(
             id="plan_wtc",
             label="Plan (WTC)",
             team="management",
             description="Workforce planning via WTC",
             row=7, col=1,
-            connections=["poa"],
-        ),
-        WorkflowNode(
-            id="postings",
-            label="Postings",
-            team="floor_managers",
-            description="Financial postings and allocations",
-            row=7, col=0,
-            connections=["fm"],
+            connections=["poa", "fm"],
         ),
         WorkflowNode(
             id="poa",
@@ -309,19 +300,35 @@ def get_default_workflow() -> WorkflowData:
             team="management",
             description="Plan of Action coordination",
             row=7, col=2,
+            connections=["fm"],
         ),
 
-        # Row 8: Floor Managers
+        # === BOTTOM LEFT: Floor Managers (FM) ===
+        WorkflowNode(
+            id="cross_checks",
+            label="Cross Checks",
+            team="floor_managers",
+            description="Verification and cross-checking processes",
+            row=6, col=0,
+            connections=["postings"],
+        ),
+        WorkflowNode(
+            id="postings",
+            label="Postings",
+            team="floor_managers",
+            description="Financial postings and allocations",
+            row=7, col=0,
+            connections=["fm", "buildbooks"],
+        ),
         WorkflowNode(
             id="fm",
             label="FM",
             team="floor_managers",
             description="Floor Managers - oversee event delivery",
             row=8, col=1,
-            connections=["buildbooks", "fix_pay", "roster_issues", "function_report"],
+            connections=["buildbooks", "fix_pay", "roster_issues", "function_report", "opera"],
+            is_key_member=True,  # Highlighted darker
         ),
-
-        # Row 9: FM outputs
         WorkflowNode(
             id="buildbooks",
             label="Buildbooks/Reallocations",
@@ -351,8 +358,6 @@ def get_default_workflow() -> WorkflowData:
             row=9, col=3,
             connections=["captains"],
         ),
-
-        # Row 10: Opera and Captains
         WorkflowNode(
             id="opera",
             label="Opera",
@@ -360,6 +365,8 @@ def get_default_workflow() -> WorkflowData:
             description="Opera PMS integration",
             row=10, col=0,
         ),
+
+        # === BOTTOM RIGHT: Event Delivery ===
         WorkflowNode(
             id="captains",
             label="Captains",
@@ -368,8 +375,6 @@ def get_default_workflow() -> WorkflowData:
             row=10, col=3,
             connections=["floor_management"],
         ),
-
-        # Row 11: Floor Management
         WorkflowNode(
             id="floor_management",
             label="Floor Management",
