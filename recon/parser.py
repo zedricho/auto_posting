@@ -32,31 +32,20 @@ def _extract_column_text(page) -> str:
     page_width = page.width
     midpoint = page_width / 2
 
-    # Check if this looks like a two-column layout
-    # Look for words on both sides of the midpoint
-    left_words = [w for w in words if w['x1'] < midpoint + 20]  # Allow some overlap
-    right_words = [w for w in words if w['x0'] > midpoint - 20]
+    # Split words into left and right based on their CENTER position
+    # (using center avoids edge cases where a word spans the midpoint)
+    left_words = [w for w in words if (w['x0'] + w['x1']) / 2 < midpoint]
+    right_words = [w for w in words if (w['x0'] + w['x1']) / 2 >= midpoint]
 
-    # If not clearly two columns (one side is mostly empty), use standard extraction
-    if len(left_words) < 10 or len(right_words) < 10:
+    # Detect two-column layout:
+    # Both sides must have substantial content (not just headers/page numbers)
+    # We check for content words, not just total count
+    min_words_per_column = 20  # Need at least 20 words per column
+
+    is_two_column = len(left_words) >= min_words_per_column and len(right_words) >= min_words_per_column
+
+    if not is_two_column:
         return page.extract_text() or ""
-
-    # Check if there's a clear gap in the middle (column separator)
-    x_positions = sorted(set(w['x0'] for w in words))
-    has_gap = False
-    for i in range(len(x_positions) - 1):
-        if x_positions[i] < midpoint < x_positions[i + 1]:
-            gap = x_positions[i + 1] - x_positions[i]
-            if gap > 30:  # Significant gap indicates columns
-                has_gap = True
-                break
-
-    if not has_gap:
-        return page.extract_text() or ""
-
-    # Split words into left and right columns (using strict midpoint)
-    left_words = [w for w in words if w['x0'] < midpoint]
-    right_words = [w for w in words if w['x0'] >= midpoint]
 
     def reconstruct_text(word_list):
         """Reconstruct text from words, grouping by line."""
