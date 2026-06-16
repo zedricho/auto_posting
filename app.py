@@ -353,7 +353,7 @@ def render_step_1_upload():
 
         # Highlight rows needing manual values
         st.dataframe(
-            df.drop(columns=["idx"]),
+            df.drop(columns=["idx"], errors="ignore"),
             use_container_width=True,
             hide_index=True,
         )
