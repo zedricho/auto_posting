@@ -15,6 +15,10 @@ from recon.workflow import (
     load_workflow, save_workflow, get_default_workflow,
     WorkflowNode, WorkflowData, TEAM_COLORS, TEAM_COLORS_DARK, TEAM_LABELS,
 )
+from recon.packing import (
+    generate_packing_list, get_items_by_category, save_packing_list,
+    CATEGORY_LABELS, CATEGORY_ORDER, PackingList,
+)
 
 
 def check_password() -> bool:
@@ -50,12 +54,14 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["Overview", "Reconciliation"],
+        ["Overview", "Packing Lists", "Reconciliation"],
         label_visibility="collapsed",
     )
 
     if page == "Overview":
         render_overview()
+    elif page == "Packing Lists":
+        render_packing()
     else:
         render_reconciliation()
 
@@ -442,6 +448,338 @@ def render_overview():
         save_workflow(st.session_state.workflow_data)
         st.session_state.expanded_node = None
         st.rerun()
+
+
+def render_packing():
+    """Packing list generator page."""
+    st.title("📦 Packing List Generator")
+
+    # Initialize session state
+    if "packing_list" not in st.session_state:
+        st.session_state.packing_list = None
+    if "packing_eo_pax" not in st.session_state:
+        st.session_state.packing_eo_pax = None
+    if "packing_eo_tables" not in st.session_state:
+        st.session_state.packing_eo_tables = None
+
+    # ============ STEP 1: EO UPLOAD (OPTIONAL) ============
+    st.markdown("### Step 1: Load from Event Order (Optional)")
+
+    with st.expander("📄 Upload EO to auto-fill details", expanded=False):
+        eo_file = st.file_uploader("Upload EO PDF", type=["pdf"], key="packing_eo_upload")
+
+        if eo_file is not None:
+            if st.button("Extract from EO"):
+                with st.spinner("Reading EO..."):
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(eo_file.read())
+                        tmp_path = tmp.name
+
+                    try:
+                        event_days = parse_pdf_multiday(tmp_path)
+                        if event_days:
+                            # Use first day with most line items
+                            best_day = max(event_days, key=lambda d: len(d.event_order.line_items))
+                            eo = best_day.event_order
+
+                            # Extract pax from day delegate package or max GTD
+                            pax_estimate = 0
+                            for item in eo.line_items:
+                                if item.pax and item.pax > pax_estimate:
+                                    pax_estimate = item.pax
+
+                            # Estimate tables (assume 10 pax per table)
+                            tables_estimate = max(1, pax_estimate // 10) if pax_estimate else 0
+
+                            st.session_state.packing_eo_pax = pax_estimate
+                            st.session_state.packing_eo_tables = tables_estimate
+                            st.session_state.packing_event_name = eo.event_name or ""
+                            st.session_state.packing_event_date = eo.event_date
+
+                            st.success(f"Extracted: {eo.event_name} - {pax_estimate} pax suggested")
+                    except Exception as e:
+                        st.error(f"Error reading EO: {e}")
+                    finally:
+                        os.unlink(tmp_path)
+
+        if st.session_state.packing_eo_pax:
+            st.info(f"**EO Suggestion:** {st.session_state.packing_eo_pax} pax, ~{st.session_state.packing_eo_tables} tables")
+
+    st.divider()
+
+    # ============ STEP 2: EVENT CONFIGURATION ============
+    st.markdown("### Step 2: Event Configuration")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        event_name = st.text_input(
+            "Event Name",
+            value=st.session_state.get("packing_event_name", ""),
+            key="packing_name_input"
+        )
+        event_date = st.date_input(
+            "Event Date",
+            value=st.session_state.get("packing_event_date", datetime.now().date()),
+            key="packing_date_input"
+        )
+        location = st.selectbox(
+            "Location",
+            ["Brisbane Ballroom", "Event Centre", "Level 7", "Other"],
+            key="packing_location"
+        )
+
+    with col2:
+        # Use EO suggestions as defaults if available
+        default_pax = st.session_state.packing_eo_pax or 100
+        default_tables = st.session_state.packing_eo_tables or 10
+
+        pax = st.number_input(
+            "Guest Count (Pax)",
+            min_value=1, max_value=2000,
+            value=default_pax,
+            step=10,
+            key="packing_pax"
+        )
+        tables = st.number_input(
+            "Table Count",
+            min_value=1, max_value=200,
+            value=default_tables,
+            step=1,
+            key="packing_tables"
+        )
+
+        # Show if overriding EO suggestion
+        if st.session_state.packing_eo_pax and pax != st.session_state.packing_eo_pax:
+            st.caption(f"EO suggested: {st.session_state.packing_eo_pax} pax")
+
+    st.divider()
+
+    # ============ STEP 3: SERVICE OPTIONS ============
+    st.markdown("### Step 3: Service Options")
+
+    opt_col1, opt_col2, opt_col3 = st.columns(3)
+
+    with opt_col1:
+        courses = st.radio(
+            "Courses",
+            [1, 2, 3],
+            index=1,  # Default to 2 courses
+            horizontal=True,
+            key="packing_courses"
+        )
+        linen_color = st.radio(
+            "Linen Colour",
+            ["black", "white"],
+            horizontal=True,
+            format_func=lambda x: x.title(),
+            key="packing_linen"
+        )
+
+    with opt_col2:
+        has_tc = st.checkbox("Preset Tea & Coffee", key="packing_tc")
+        has_canapes = st.checkbox("Canapés", key="packing_canapes")
+
+    with opt_col3:
+        has_foh_bar = st.checkbox("FOH Bar Required", key="packing_foh")
+
+    st.divider()
+
+    # ============ GENERATE BUTTON ============
+    if st.button("📋 Generate Packing List", type="primary", use_container_width=True):
+        packing_list = generate_packing_list(
+            event_name=event_name,
+            event_date=event_date,
+            location=location,
+            pax=pax,
+            tables=tables,
+            courses=courses,
+            has_tc=has_tc,
+            has_foh_bar=has_foh_bar,
+            has_canapes=has_canapes,
+            linen_color=linen_color,
+        )
+        st.session_state.packing_list = packing_list
+        st.rerun()
+
+    # ============ STEP 4: REVIEW & EDIT ITEMS ============
+    if st.session_state.packing_list:
+        packing_list = st.session_state.packing_list
+
+        st.markdown("### Step 4: Review & Adjust Items")
+
+        # Event summary
+        st.markdown(f"""
+        **{packing_list.event_name}** | {packing_list.event_date} | {packing_list.location}
+        **{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | {packing_list.linen_color.title()} linen
+        """)
+
+        st.divider()
+
+        # Items by category
+        items_by_cat = get_items_by_category(packing_list)
+
+        for category in CATEGORY_ORDER:
+            items = items_by_cat.get(category, [])
+            # Only show categories with items that have qty > 0 or are always shown
+            active_items = [i for i in items if i.final_qty > 0]
+
+            if not active_items and category in ["bar_foh", "tc", "canape"]:
+                continue  # Skip empty optional categories
+
+            with st.expander(f"**{CATEGORY_LABELS[category]}** ({len(active_items)} items)", expanded=True):
+                if not items:
+                    st.caption("No items in this category")
+                    continue
+
+                # Create editable table
+                for i, item in enumerate(items):
+                    if item.final_qty == 0 and category in ["linen"]:
+                        # Skip zero-qty linen (wrong color)
+                        continue
+
+                    col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
+
+                    with col1:
+                        st.markdown(f"**{item.name}**")
+
+                    with col2:
+                        st.caption(f"Suggested: {item.suggested_qty}")
+
+                    with col3:
+                        # Editable quantity
+                        new_qty = st.number_input(
+                            "Qty",
+                            min_value=0,
+                            value=item.final_qty,
+                            step=1,
+                            key=f"qty_{category}_{i}",
+                            label_visibility="collapsed"
+                        )
+                        # Update if changed
+                        if new_qty != item.final_qty:
+                            item.final_qty = new_qty
+
+                    with col4:
+                        if item.notes:
+                            st.caption(item.notes)
+
+        st.divider()
+
+        # ============ STEP 5: EXPORT ============
+        st.markdown("### Step 5: Export")
+
+        export_col1, export_col2, export_col3 = st.columns(3)
+
+        with export_col1:
+            if st.button("📊 Download Excel", use_container_width=True):
+                # Generate Excel file matching current format
+                excel_bytes = generate_packing_excel(packing_list)
+                st.download_button(
+                    label="📥 Save Excel File",
+                    data=excel_bytes,
+                    file_name=f"packing_{packing_list.event_name.replace(' ', '_')}_{packing_list.id}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_packing_excel"
+                )
+
+        with export_col2:
+            if st.button("💾 Save Draft", use_container_width=True):
+                save_packing_list(packing_list)
+                st.success("Draft saved!")
+
+        with export_col3:
+            if st.button("🔄 Clear & Start Over", use_container_width=True):
+                st.session_state.packing_list = None
+                st.session_state.packing_eo_pax = None
+                st.session_state.packing_eo_tables = None
+                st.rerun()
+
+
+def generate_packing_excel(packing_list: PackingList) -> bytes:
+    """Generate Excel file matching the current packing sheet format."""
+    from io import BytesIO
+    import xlsxwriter
+
+    output = BytesIO()
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    worksheet = workbook.add_worksheet("Packing List")
+
+    # Formats
+    header_fmt = workbook.add_format({"bold": True, "font_size": 12})
+    section_fmt = workbook.add_format({"bold": True, "bg_color": "#D9D9D9", "border": 1})
+    cell_fmt = workbook.add_format({"border": 1})
+    qty_fmt = workbook.add_format({"border": 1, "align": "center"})
+
+    # Column widths
+    worksheet.set_column(0, 0, 30)  # Item name
+    worksheet.set_column(1, 1, 12)  # Quantity
+    worksheet.set_column(2, 2, 12)  # Packed Y/N
+    worksheet.set_column(3, 3, 30)  # Notes
+
+    row = 0
+
+    # Header section
+    worksheet.write(row, 0, "EVENT NAME:", header_fmt)
+    worksheet.write(row, 3, packing_list.event_name)
+    row += 1
+
+    worksheet.write(row, 0, "EVENT DATE:", header_fmt)
+    worksheet.write(row, 3, str(packing_list.event_date) if packing_list.event_date else "")
+    row += 1
+
+    worksheet.write(row, 0, "GUEST COUNT:", header_fmt)
+    worksheet.write(row, 1, packing_list.pax)
+    row += 1
+
+    worksheet.write(row, 0, "TABLE COUNT:", header_fmt)
+    worksheet.write(row, 1, packing_list.tables)
+    row += 1
+
+    worksheet.write(row, 0, "EVENT LOCATION:", header_fmt)
+    worksheet.write(row, 3, packing_list.location)
+    row += 1
+
+    row += 1  # Empty row
+
+    # Items by category
+    items_by_cat = get_items_by_category(packing_list)
+
+    for category in CATEGORY_ORDER:
+        items = items_by_cat.get(category, [])
+        active_items = [i for i in items if i.final_qty > 0]
+
+        if not active_items:
+            continue
+
+        # Category header
+        worksheet.write(row, 0, CATEGORY_LABELS[category], section_fmt)
+        worksheet.write(row, 1, "QUANTITY", section_fmt)
+        worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
+        worksheet.write(row, 3, "NOTES", section_fmt)
+        row += 1
+
+        # Items
+        for item in active_items:
+            worksheet.write(row, 0, item.name, cell_fmt)
+            worksheet.write(row, 1, item.final_qty, qty_fmt)
+            worksheet.write(row, 2, "", cell_fmt)  # Packed column (empty for manual check)
+            worksheet.write(row, 3, item.notes, cell_fmt)
+            row += 1
+
+        row += 1  # Empty row between sections
+
+    # Sign-off section
+    row += 1
+    worksheet.write(row, 0, "Packers/Captains Sign off", header_fmt)
+    row += 1
+    worksheet.write(row, 0, "Name:")
+    row += 1
+    worksheet.write(row, 0, "Signature:")
+
+    workbook.close()
+    output.seek(0)
+    return output.getvalue()
 
 
 def render_step_1_upload():
