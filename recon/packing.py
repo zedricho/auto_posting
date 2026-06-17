@@ -120,6 +120,7 @@ PACKING_ITEMS: List[PackingItem] = [
 
     # === TABLE SET ===
     PackingItem("side_plate", "Side Plate", "table_set", "per_pax"),
+    # Note: Entrée fork uses special "per_pax_or_2x" formula - handled in generate_packing_list
     PackingItem("entree_fork", "Entrée Fork", "table_set", "per_pax",
                 condition="has_entree", default_notes="Dessert fork size"),
     PackingItem("entree_knife", "Entrée Knife", "table_set", "per_pax_2",
@@ -233,6 +234,10 @@ def generate_packing_list(
     items = []
     for item in PACKING_ITEMS:
         qty = item.calculate_qty(pax, tables, options)
+
+        # Special case: Entrée fork needs 2x for 3-course (entrée + dessert)
+        if item.id == "entree_fork" and courses == 3:
+            qty = pax * 2
 
         # Handle linen color selection
         if item.id == "black_napkins" and linen_color != "black":
