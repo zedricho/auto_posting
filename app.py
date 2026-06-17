@@ -98,347 +98,350 @@ def render_reconciliation():
 
 
 def render_overview():
-    """Operations workflow overview page - visual flowchart with clickable nodes."""
+    """Operations workflow overview page - connected flowchart with inline note popups."""
     st.title("🏢 Operations Overview")
 
     # Load workflow data
     if "workflow_data" not in st.session_state:
         st.session_state.workflow_data = load_workflow()
-    if "editing_node" not in st.session_state:
-        st.session_state.editing_node = None
+    if "expanded_node" not in st.session_state:
+        st.session_state.expanded_node = None
 
     workflow = st.session_state.workflow_data
 
-    # Custom CSS for flowchart
+    # Custom CSS for connected flowchart
     st.markdown("""
     <style>
-    .flow-container {
+    .flowchart {
+        background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+        border-radius: 16px;
+        padding: 25px;
+        margin: 10px 0;
+    }
+    .flow-row {
         display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
         align-items: center;
-        margin: 15px 0;
+        justify-content: center;
+        gap: 8px;
+        margin: 8px 0;
+        flex-wrap: wrap;
     }
     .flow-node {
-        padding: 12px 18px;
-        border-radius: 10px;
+        padding: 10px 16px;
+        border-radius: 8px;
         text-align: center;
-        font-weight: bold;
-        font-size: 14px;
-        border: 2px solid #333;
+        font-weight: 600;
+        font-size: 13px;
+        border: 2px solid #444;
         cursor: pointer;
-        transition: transform 0.2s, box-shadow 0.2s;
-        min-width: 90px;
+        transition: all 0.2s ease;
+        min-width: 85px;
+        box-shadow: 2px 2px 6px rgba(0,0,0,0.15);
     }
     .flow-node:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        transform: translateY(-2px);
+        box-shadow: 3px 4px 10px rgba(0,0,0,0.25);
     }
     .flow-node-key {
         border-width: 3px;
-        font-size: 16px;
-        padding: 14px 20px;
+        font-size: 15px;
+        padding: 12px 20px;
+        font-weight: 700;
     }
     .flow-arrow {
-        font-size: 24px;
         color: #555;
-        margin: 0 8px;
+        font-size: 18px;
+        font-weight: bold;
     }
-    .flow-section {
-        background: #f8f9fa;
+    .flow-arrow-down {
+        text-align: center;
+        color: #555;
+        font-size: 18px;
+        margin: 4px 0;
+    }
+    .note-badge {
+        font-size: 10px;
+        background: rgba(0,0,0,0.15);
+        border-radius: 8px;
+        padding: 1px 5px;
+        margin-left: 4px;
+    }
+    .node-popup {
+        background: white;
+        border: 2px solid #333;
         border-radius: 12px;
-        padding: 20px;
-        margin: 15px 0;
+        padding: 15px;
+        margin: 10px 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
-    .note-count {
-        font-size: 11px;
-        background: rgba(255,255,255,0.8);
-        border-radius: 10px;
-        padding: 2px 8px;
-        margin-top: 5px;
-        display: inline-block;
+    .section-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #444;
+        margin-bottom: 12px;
+        padding-bottom: 6px;
+        border-bottom: 2px solid #ddd;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    # Legend with team colors
-    st.markdown("##### Team Legend")
-    legend_cols = st.columns(5)
-    for i, (team, color) in enumerate(TEAM_COLORS.items()):
-        dark_color = TEAM_COLORS_DARK[team]
-        with legend_cols[i]:
-            st.markdown(
-                f'<div style="background: linear-gradient(135deg, {dark_color} 0%, {color} 100%); '
-                f'padding: 8px 12px; border-radius: 8px; text-align: center; font-weight: bold; '
-                f'border: 2px solid #333; font-size: 12px;">{TEAM_LABELS[team]}</div>',
-                unsafe_allow_html=True
-            )
+    # Legend
+    st.markdown("##### Team Colors")
+    legend_html = '<div style="display:flex; gap:15px; flex-wrap:wrap; margin-bottom:15px;">'
+    for team, color in TEAM_COLORS.items():
+        dark = TEAM_COLORS_DARK[team]
+        legend_html += f'''<div style="background: linear-gradient(135deg, {dark}, {color});
+            padding: 6px 14px; border-radius: 6px; font-weight: 600; font-size: 12px;
+            border: 2px solid #333;">{TEAM_LABELS[team]}</div>'''
+    legend_html += '</div>'
+    st.markdown(legend_html, unsafe_allow_html=True)
 
-    st.divider()
+    # Helper functions
+    def get_color(node):
+        colors = TEAM_COLORS_DARK if node.is_key_member else TEAM_COLORS
+        return colors.get(node.team, "#D3D3D3")
 
-    # Helper to get node color
-    def get_node_color(node):
-        if node.is_key_member:
-            return TEAM_COLORS_DARK.get(node.team, "#A9A9A9")
-        return TEAM_COLORS.get(node.team, "#D3D3D3")
+    def node_html(node_id):
+        """Generate HTML for a node."""
+        node = workflow.get_node(node_id)
+        if not node:
+            return ""
+        color = get_color(node)
+        key_class = " flow-node-key" if node.is_key_member else ""
+        badge = f'<span class="note-badge">📝{len(node.notes)}</span>' if node.notes else ""
+        return f'<div class="flow-node{key_class}" style="background:{color};">{node.label}{badge}</div>'
 
-    # Helper to render clickable node button
-    def render_node_button(node_id, col=None):
+    def render_node_with_popup(node_id, container=None):
+        """Render a clickable node that expands to show notes inline."""
         node = workflow.get_node(node_id)
         if not node:
             return
-        container = col if col else st
-        color = get_node_color(node)
-        is_key = node.is_key_member
-        notes_text = f" 📝{len(node.notes)}" if node.notes else ""
 
-        # Use a button styled to look like a node
-        btn_label = f"{node.label}{notes_text}"
-        if container.button(btn_label, key=f"node_btn_{node_id}", use_container_width=False):
-            st.session_state.editing_node = node_id
+        ctx = container if container else st
+        color = get_color(node)
+        is_expanded = st.session_state.expanded_node == node_id
+        notes_badge = f" 📝{len(node.notes)}" if node.notes else ""
+
+        # Node button with team color
+        btn_style = "primary" if node.is_key_member else "secondary"
+        if ctx.button(
+            f"{node.label}{notes_badge}",
+            key=f"node_{node_id}",
+            type=btn_style,
+        ):
+            # Toggle expansion - clicking same node closes it, clicking different opens new
+            if st.session_state.expanded_node == node_id:
+                st.session_state.expanded_node = None
+            else:
+                st.session_state.expanded_node = node_id
             st.rerun()
 
-    # ============ INTERCONNECTED FLOWCHART ============
+        # Show popup if this node is expanded
+        if is_expanded:
+            with ctx.container():
+                st.markdown(
+                    f'''<div class="node-popup">
+                    <div style="background:{color}; padding:10px; border-radius:8px; margin-bottom:10px;">
+                        <strong>{node.label}</strong> — {TEAM_LABELS.get(node.team, node.team)}<br>
+                        <span style="font-size:12px; color:#333;">{node.description}</span>
+                    </div>
+                    </div>''',
+                    unsafe_allow_html=True
+                )
 
-    # --- SECTION 1: Sales & Planning (Left) + Operations (Right) ---
-    st.markdown("### 📋 Sales, Planning & Operations")
+                # Notes section
+                if node.notes:
+                    for i, note in enumerate(node.notes):
+                        nc1, nc2 = st.columns([6, 1])
+                        nc1.markdown(f"• {note}")
+                        if nc2.button("🗑️", key=f"del_{node_id}_{i}"):
+                            node.notes.pop(i)
+                            save_workflow(workflow)
+                            st.rerun()
 
-    main_col1, arrow_col, main_col2 = st.columns([2, 0.3, 2])
+                # Add note input
+                new_note = st.text_input("Add note:", key=f"note_input_{node_id}", placeholder="Type and press Enter...")
+                col1, col2 = st.columns(2)
+                if col1.button("💾 Save", key=f"save_{node_id}"):
+                    if new_note.strip():
+                        workflow.add_note(node_id, new_note.strip())
+                        save_workflow(workflow)
+                        st.rerun()
+                if col2.button("✖️ Close", key=f"close_{node_id}"):
+                    st.session_state.expanded_node = None
+                    st.rerun()
 
-    with main_col1:
-        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
-        st.markdown("**Planning Path**")
+    # ========== MAIN FLOWCHART ==========
 
-        # Row 1: Sales
-        c1, c2, c3 = st.columns([1, 0.3, 1])
-        render_node_button("sales", c1)
-        c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
-        render_node_button("initial_event", c3)
+    # --- PLANNING & OPERATIONS (side by side) ---
+    st.markdown("### 📋 Planning → Operations Flow")
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+    plan_col, mid_col, ops_col = st.columns([1, 0.15, 1])
 
-        # Row 2: Delphi
-        c1, c2, c3 = st.columns([1, 0.3, 1])
-        render_node_button("delphi", c1)
-        c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
-        render_node_button("daily_updates", c3)
+    with plan_col:
+        st.markdown('<div class="flowchart">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📌 Planning</div>', unsafe_allow_html=True)
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        # Sales → Initial Event
+        c1, c2, c3 = st.columns([1, 0.2, 1])
+        render_node_with_popup("sales", c1)
+        c2.markdown('<p class="flow-arrow" style="text-align:center;">→</p>', unsafe_allow_html=True)
+        render_node_with_popup("initial_event", c3)
 
-        # Row 3: Planners (KEY)
-        render_node_button("planners")
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        # Delphi ↔ Daily Updates
+        c1, c2, c3 = st.columns([1, 0.2, 1])
+        render_node_with_popup("delphi", c1)
+        c2.markdown('<p class="flow-arrow" style="text-align:center;">↔</p>', unsafe_allow_html=True)
+        render_node_with_popup("daily_updates", c3)
 
-        # Row 4: Export
-        render_node_button("export_eo")
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
+
+        # Planners (KEY)
+        render_node_with_popup("planners")
+
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
+
+        # Export EO
+        render_node_with_popup("export_eo")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    with arrow_col:
-        st.markdown('<p style="text-align:center; font-size:30px; margin-top:150px;">→</p>', unsafe_allow_html=True)
+    with mid_col:
+        st.markdown('<p style="text-align:center; font-size:28px; margin-top:120px; color:#555;">→</p>', unsafe_allow_html=True)
 
-    with main_col2:
-        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
-        st.markdown("**Operations Path**")
+    with ops_col:
+        st.markdown('<div class="flowchart">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">⚙️ Operations</div>', unsafe_allow_html=True)
 
-        # Row 1: Rapid/Go
-        render_node_button("rapid_go")
+        # Rapid/Go
+        render_node_with_popup("rapid_go")
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-        # Row 2: Log Team (KEY) + Linen/Mobile
+        # Log Team + branches
         c1, c2, c3 = st.columns(3)
-        render_node_button("log_team", c1)
-        render_node_button("linen_orders", c2)
-        render_node_button("mobile_doc", c3)
+        render_node_with_popup("log_team", c1)
+        render_node_with_popup("linen_orders", c2)
+        render_node_with_popup("mobile_doc", c3)
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-        # Row 3: Outputs
+        # Outputs
         c1, c2, c3 = st.columns(3)
-        render_node_button("packing_sheets", c1)
-        render_node_button("room_flips", c2)
-        render_node_button("asset_movement", c3)
+        render_node_with_popup("packing_sheets", c1)
+        render_node_with_popup("room_flips", c2)
+        render_node_with_popup("asset_movement", c3)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- SECTION 2: Management ---
+    # --- MANAGEMENT ---
     st.markdown("### 👔 Management & Rostering")
 
-    st.markdown('<div class="flow-section">', unsafe_allow_html=True)
+    st.markdown('<div class="flowchart">', unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns([1.2, 0.3, 1, 1])
-    render_node_button("management", c1)
-    c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
-    render_node_button("roster_build", c3)
-    c4.markdown('<p style="color:#666; margin-top:10px;">(Labour %)</p>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns([1, 0.15, 1, 0.15])
+    render_node_with_popup("management", c1)
+    c2.markdown('<p class="flow-arrow" style="text-align:center;">→</p>', unsafe_allow_html=True)
+    render_node_with_popup("roster_build", c3)
+    c4.markdown('<p style="color:#666; font-size:11px;">(Labour %)</p>', unsafe_allow_html=True)
 
-    st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+    st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1, 0.3, 1])
-    render_node_button("plan_wtc", c1)
-    c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
-    render_node_button("poa", c3)
+    c1, c2, c3, c4 = st.columns([1, 0.15, 1, 1])
+    render_node_with_popup("plan_wtc", c1)
+    c2.markdown('<p class="flow-arrow" style="text-align:center;">→</p>', unsafe_allow_html=True)
+    render_node_with_popup("poa", c3)
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # --- SECTION 3: Floor Managers ---
-    st.markdown("### 🎯 Floor Managers (FM) & Event Delivery")
+    # --- FLOOR MANAGERS & DELIVERY ---
+    st.markdown("### 🎯 Floor Managers & Event Delivery")
 
-    fm_col, delivery_col = st.columns([1.5, 1])
+    fm_col, delivery_col = st.columns([1.3, 1])
 
     with fm_col:
-        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
-        st.markdown("**FM Operations**")
+        st.markdown('<div class="flowchart">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🔵 FM Operations</div>', unsafe_allow_html=True)
 
-        c1, c2, c3 = st.columns([1, 0.3, 1])
-        render_node_button("cross_checks", c1)
-        c2.markdown('<p style="text-align:center; font-size:20px;">→</p>', unsafe_allow_html=True)
-        render_node_button("postings", c3)
+        c1, c2, c3 = st.columns([1, 0.15, 1])
+        render_node_with_popup("cross_checks", c1)
+        c2.markdown('<p class="flow-arrow" style="text-align:center;">→</p>', unsafe_allow_html=True)
+        render_node_with_popup("postings", c3)
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-        c1, c2, c3 = st.columns([1, 0.3, 1])
-        render_node_button("fm", c1)
-        c2.markdown('<p style="text-align:center; font-size:20px;">↔</p>', unsafe_allow_html=True)
-        render_node_button("opera", c3)
+        c1, c2, c3 = st.columns([1, 0.15, 1])
+        render_node_with_popup("fm", c1)
+        c2.markdown('<p class="flow-arrow" style="text-align:center;">↔</p>', unsafe_allow_html=True)
+        render_node_with_popup("opera", c3)
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
         c1, c2, c3, c4 = st.columns(4)
-        render_node_button("buildbooks", c1)
-        render_node_button("fix_pay", c2)
-        render_node_button("roster_issues", c3)
-        render_node_button("function_report", c4)
+        render_node_with_popup("buildbooks", c1)
+        render_node_with_popup("fix_pay", c2)
+        render_node_with_popup("roster_issues", c3)
+        render_node_with_popup("function_report", c4)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
     with delivery_col:
-        st.markdown('<div class="flow-section">', unsafe_allow_html=True)
-        st.markdown("**Event Delivery**")
+        st.markdown('<div class="flowchart">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🎪 Event Delivery</div>', unsafe_allow_html=True)
 
-        render_node_button("captains")
+        render_node_with_popup("captains")
 
-        st.markdown('<p style="text-align:center; font-size:20px;">↓</p>', unsafe_allow_html=True)
+        st.markdown('<p class="flow-arrow-down">↓</p>', unsafe_allow_html=True)
 
-        render_node_button("floor_management")
+        render_node_with_popup("floor_management")
 
-        st.markdown("""
-        <div style="margin-top: 15px; color: #666; font-size: 13px; padding: 10px; background: #fff; border-radius: 8px;">
-            • Break allocations<br>
-            • Set rooms & bars<br>
-            • etc.
+        st.markdown('''
+        <div style="margin-top:12px; color:#555; font-size:12px; padding:8px;
+            background:rgba(255,255,255,0.7); border-radius:6px;">
+            • Break allocations<br>• Set rooms & bars<br>• Staff coordination
         </div>
-        """, unsafe_allow_html=True)
+        ''', unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
 
+    # --- ADD NEW NODE & FOOTER ---
     st.divider()
 
-    # ============ NODE EDITOR (appears when node is clicked) ============
-    if st.session_state.editing_node:
-        node = workflow.get_node(st.session_state.editing_node)
-        if node:
-            st.markdown(f"### ✏️ Editing: {node.label}")
+    with st.expander("➕ Add New Node"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            new_id = st.text_input("Node ID", key="new_node_id")
+            new_label = st.text_input("Label", key="new_node_label")
+        with c2:
+            new_team = st.selectbox("Team", list(TEAM_COLORS.keys()),
+                format_func=lambda x: TEAM_LABELS.get(x, x), key="new_node_team")
+            new_key = st.checkbox("Key member", key="new_node_key")
+        with c3:
+            new_desc = st.text_area("Description", key="new_node_desc", height=80)
 
-            edit_col1, edit_col2 = st.columns([1, 1])
-
-            with edit_col1:
-                color = get_node_color(node)
-                st.markdown(
-                    f'<div style="background-color: {color}; padding: 15px; border-radius: 10px; '
-                    f'border: 3px solid #333; margin-bottom: 15px;">'
-                    f'<strong style="font-size: 18px;">{node.label}</strong><br>'
-                    f'<span style="color: #333;">Team: {TEAM_LABELS.get(node.team, node.team)}</span><br>'
-                    f'<span style="color: #555;">{node.description}</span>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-
-                # Existing notes
-                if node.notes:
-                    st.markdown("**Notes:**")
-                    for i, note in enumerate(node.notes):
-                        nc1, nc2 = st.columns([5, 1])
-                        with nc1:
-                            st.markdown(f"📝 {note}")
-                        with nc2:
-                            if st.button("🗑️", key=f"del_note_{node.id}_{i}"):
-                                node.notes.pop(i)
-                                save_workflow(workflow)
-                                st.rerun()
-                else:
-                    st.caption("No notes yet")
-
-            with edit_col2:
-                st.markdown("**Add a note:**")
-                new_note = st.text_area("", placeholder="Type your note here...", key="edit_note_input", height=120)
-
-                bc1, bc2 = st.columns(2)
-                with bc1:
-                    if st.button("💾 Save Note", use_container_width=True):
-                        if new_note.strip():
-                            workflow.add_note(node.id, new_note.strip())
-                            save_workflow(workflow)
-                            st.success("Note saved!")
-                            st.rerun()
-                with bc2:
-                    if st.button("✖️ Close", use_container_width=True):
-                        st.session_state.editing_node = None
-                        st.rerun()
-
-            st.divider()
-
-    # ============ ADD NEW NODE ============
-    with st.expander("➕ Add New Node to Workflow"):
-        nc1, nc2, nc3 = st.columns(3)
-        with nc1:
-            new_id = st.text_input("Node ID (unique, no spaces)", key="new_node_id")
-            new_label = st.text_input("Display Label", key="new_node_label")
-        with nc2:
-            new_team = st.selectbox(
-                "Team",
-                options=list(TEAM_COLORS.keys()),
-                format_func=lambda x: TEAM_LABELS.get(x, x),
-                key="new_node_team",
-            )
-            new_is_key = st.checkbox("Key team member (darker color)", key="new_node_key")
-        with nc3:
-            new_desc = st.text_area("Description", key="new_node_desc", height=100)
-
-        if st.button("Create Node", use_container_width=False):
+        if st.button("Create Node"):
             if new_id and new_label:
                 if workflow.get_node(new_id):
-                    st.error("Node ID already exists")
+                    st.error("ID exists")
                 else:
-                    new_node = WorkflowNode(
-                        id=new_id,
-                        label=new_label,
-                        team=new_team,
-                        description=new_desc,
-                        is_key_member=new_is_key,
-                    )
-                    workflow.add_node(new_node)
+                    workflow.add_node(WorkflowNode(
+                        id=new_id, label=new_label, team=new_team,
+                        description=new_desc, is_key_member=new_key
+                    ))
                     save_workflow(workflow)
-                    st.success(f"Node '{new_label}' created!")
+                    st.success(f"Created '{new_label}'")
                     st.rerun()
-            else:
-                st.warning("ID and Label are required")
 
     # Footer
-    st.divider()
     fc1, fc2 = st.columns([4, 1])
-    with fc1:
-        st.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'} | Click any node to edit")
-    with fc2:
-        if st.button("🔄 Reset"):
-            workflow = get_default_workflow()
-            save_workflow(workflow)
-            st.session_state.workflow_data = workflow
-            st.session_state.editing_node = None
-            st.success("Reset!")
-            st.rerun()
+    fc1.caption(f"Last updated: {workflow.last_updated[:19] if workflow.last_updated else 'Never'}")
+    if fc2.button("🔄 Reset"):
+        st.session_state.workflow_data = get_default_workflow()
+        save_workflow(st.session_state.workflow_data)
+        st.session_state.expanded_node = None
+        st.rerun()
 
 
 def render_step_1_upload():
