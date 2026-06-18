@@ -498,15 +498,23 @@ def parse_line(line: str) -> Optional[ParsedLine]:
     if flat_single_match:
         qty = int(flat_single_match.group(1))
         price = _parse_price(flat_single_match.group(2))
-        return ParsedLine(
-            description=line.strip(),
-            basis="flat",
-            qty=qty,
-            unit_price=price,
-            value=round(qty * price, 2),
-            money_type="contracted",
-            posts_to="both",
-        )
+        # Skip if the "quantity" is actually part of a time pattern (e.g., "12:00")
+        # Check if the matched number is followed by a colon in the original line
+        match_start = flat_single_match.start(1)
+        match_end = flat_single_match.end(1)
+        if match_end < len(line) and line[match_end] == ':':
+            # This is a time like "12:00", not a quantity - skip this match
+            pass
+        else:
+            return ParsedLine(
+                description=line.strip(),
+                basis="flat",
+                qty=qty,
+                unit_price=price,
+                value=round(qty * price, 2),
+                money_type="contracted",
+                posts_to="both",
+            )
 
     # Surcharge/fee pattern without leading quantity: text@ $X Total
     # E.g., "surcharge per item@ $135.60 Total"
@@ -861,24 +869,27 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         qty = int(flat_single_match.group(1))
         price = _parse_price(flat_single_match.group(2))
         value = round(qty * price, 2)
-
-        parsed = ParsedLine(
-            description=line.strip(),
-            basis="flat",
-            qty=qty,
-            unit_price=price,
-            value=value,
-            money_type="contracted",
-            posts_to="both",
-        )
-        trace = MatchTrace(
-            pattern_name="flat",
-            matched_text=flat_single_match.group(0),
-            extracted={"qty": qty, "price": price},
-            calculation=f"{qty} × ${price:.2f}",
-            value=value,
-        )
-        return (parsed, trace)
+        # Skip if the "quantity" is actually part of a time pattern (e.g., "12:00")
+        match_start = flat_single_match.start(1)
+        match_end = flat_single_match.end(1)
+        if not (match_end < len(line) and line[match_end] == ':'):
+            parsed = ParsedLine(
+                description=line.strip(),
+                basis="flat",
+                qty=qty,
+                unit_price=price,
+                value=value,
+                money_type="contracted",
+                posts_to="both",
+            )
+            trace = MatchTrace(
+                pattern_name="flat",
+                matched_text=flat_single_match.group(0),
+                extracted={"qty": qty, "price": price},
+                calculation=f"{qty} × ${price:.2f}",
+                value=value,
+            )
+            return (parsed, trace)
 
     # Standalone hourly rate: @ $X Per Hour (needs manual hours/guards entry)
     standalone_hourly_match = re.search(
