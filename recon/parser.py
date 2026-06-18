@@ -1467,8 +1467,13 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
                 # Content-based category overrides to fix two-column PDF interleaving issues
                 line_lower = line.lower()
 
-                # Coffee always goes to food, not beverage
-                if "coffee" in line_lower and category == "beverage":
+                # Coffee cart HIRE goes to resource (equipment rental), not food/beverage
+                # But coffee consumption stays in food
+                if ("cart hire" in line_lower or "per cart" in line_lower) and category in ("food", "beverage"):
+                    category = "resource"
+
+                # Coffee consumption goes to food, not beverage
+                elif "coffee" in line_lower and category == "beverage":
                     category = "food"
 
                 # Booth fees, exhibition items, Per Day charges, infrastructure, furniture → resource (setup costs)
