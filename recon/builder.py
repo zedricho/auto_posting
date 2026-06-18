@@ -8,43 +8,6 @@ from openpyxl.utils import get_column_letter
 from recon.models import EventOrder, CategoryTotals, WorksheetOutput
 
 
-def adjust_venue_hire_for_consumption(event: EventOrder) -> None:
-    """
-    Reduce venue hire (minimum spend shortfall) by consumption amounts entered.
-
-    When minimum spend isn't met, the shortfall shows as venue_hire.
-    Consumption revenue (espresso coffees, etc.) reduces this shortfall.
-
-    Modifies the event's line items in place.
-    """
-    # Find venue_hire items (shortfall from schedule table)
-    venue_hire_items = [
-        item for item in event.line_items
-        if item.category == "venue_hire" and item.value > 0
-    ]
-
-    if not venue_hire_items:
-        return
-
-    # Sum all consumption items that have been entered (value > 0)
-    consumption_total = sum(
-        item.value for item in event.line_items
-        if item.money_type == "consumption" and item.value > 0
-    )
-
-    if consumption_total <= 0:
-        return
-
-    # Reduce venue hire by consumption (distribute reduction across venue_hire items)
-    remaining_reduction = consumption_total
-    for item in venue_hire_items:
-        if remaining_reduction <= 0:
-            break
-        reduction = min(item.value, remaining_reduction)
-        item.value = round(item.value - reduction, 2)
-        remaining_reduction -= reduction
-
-
 def compute_totals(event: EventOrder) -> WorksheetOutput:
     """
     Compute Delphi and Opera totals from an EventOrder.
@@ -53,8 +16,11 @@ def compute_totals(event: EventOrder) -> WorksheetOutput:
     - Opera total = exclude cash (only contracted + consumption)
     - Venue hire (shortfall) is reduced by consumption amounts
     """
-    # Adjust venue hire based on consumption entered
-    adjust_venue_hire_for_consumption(event)
+    # Calculate consumption total (to reduce venue hire shortfall)
+    consumption_total = sum(
+        item.value for item in event.line_items
+        if item.money_type == "consumption" and item.value > 0
+    )
 
     # Group line items by category
     by_category: dict[str, list] = defaultdict(list)
@@ -70,6 +36,13 @@ def compute_totals(event: EventOrder) -> WorksheetOutput:
         opera_total = sum(
             item.value for item in items if item.money_type != "cash"
         )
+
+        # Venue hire (shortfall) is reduced by consumption revenue
+        # Consumption adds to F&B, which reduces the minimum spend shortfall
+        if category == "venue_hire" and consumption_total > 0:
+            reduction = min(delphi_total, consumption_total)
+            delphi_total = max(0, delphi_total - reduction)
+            opera_total = max(0, opera_total - reduction)
 
         totals.append(
             CategoryTotals(
