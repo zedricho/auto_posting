@@ -255,15 +255,29 @@ def extract_minimum_spend(text: str) -> Optional[MinimumSpend]:
     text_lower = text.lower()
     is_met = "has been met" in text_lower or "- met" in text_lower
 
-    # Look for stated shortfall
+    # Look for stated shortfall - handles multiple formats:
+    # - "shortfall of $8,200.00"
+    # - "$8,200.00 remaining"
+    # - "has not been met - $8,200.00 remaining"
+    stated_shortfall = None
+
+    # Try "shortfall of $X" pattern first
     shortfall_match = re.search(
         r"shortfall\s+of\s+\$?([\d,]+\.?\d*)",
         text,
         re.IGNORECASE,
     )
-    stated_shortfall = None
     if shortfall_match:
         stated_shortfall = float(shortfall_match.group(1).replace(",", ""))
+    else:
+        # Try "$X remaining" pattern (common alternative format)
+        remaining_match = re.search(
+            r"\$?([\d,]+\.?\d*)\s+remaining",
+            text,
+            re.IGNORECASE,
+        )
+        if remaining_match:
+            stated_shortfall = float(remaining_match.group(1).replace(",", ""))
 
     return MinimumSpend(
         amount=amount,
@@ -1530,20 +1544,15 @@ def parse_pdf_multiday(pdf_path: Union[str, Path]) -> List[EventDay]:
             min_spend = extract_minimum_spend(day_text)
 
             if min_spend and not min_spend.is_met:
-                # Check if we already have a venue_hire item for the shortfall
-                # (it may have been parsed as a line item already)
-                # Check both by keyword and by matching the shortfall value
-                shortfall_value_to_check = min_spend.stated_shortfall or 0
-                existing_shortfall = any(
-                    item.category == "venue_hire" and (
-                        "shortfall" in item.type.lower() or
-                        "minimum" in item.type.lower() or
-                        abs(item.value - shortfall_value_to_check) < 1  # Same value
-                    )
+                # Check if we already have ANY venue_hire item
+                # The schedule table already shows the correct venue hire/shortfall amount,
+                # so we don't need to calculate it manually
+                existing_venue_hire = any(
+                    item.category == "venue_hire" and item.value > 0
                     for item in line_items
                 )
 
-                if not existing_shortfall:
+                if not existing_venue_hire:
                     # Calculate F&B total from line items (for reference)
                     fb_total = sum(
                         item.value for item in line_items
