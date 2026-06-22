@@ -145,19 +145,57 @@ EVENT_TYPES = {
 }
 
 BUFFET_SUB_TYPES = {
-    "breakfast": "Buffet Breakfast",
-    "morning_tea": "Buffet Morning Tea",
-    "lunch": "Buffet Lunch",
-    "afternoon_tea": "Buffet Afternoon Tea",
-    "dinner": "Buffet Dinner",
-    "mt_lunch": "Morning Tea & Lunch",
-    "lunch_at": "Lunch & Afternoon Tea",
-    "full_day": "Morning Tea, Lunch & Afternoon Tea",
+    # Breakfast options
+    "buffet_breakfast": "Buffet Breakfast",
+    "pancake_station": "Pancake Station",
+    "omelette_station": "Omelette Station",
+    "eggs_benedict": "Eggs Benedict",
+    "breakfast_mt_lunch": "Breakfast, MT & Lunch",
+    # Morning tea options
+    "buffet_morning_tea": "Buffet Morning Tea",
+    "morning_tea_lunch": "Morning Tea and Lunch",
+    "mt_lunch_at": "Buffet MT, Lunch & Afternoon Tea",
+    # Lunch options
+    "buffet_lunch": "Buffet Lunch",
+    "lunch_afternoon_tea": "Lunch and Afternoon Tea",
+    # Afternoon tea
+    "buffet_afternoon_tea": "Buffet Afternoon Tea",
+    # Dinner options
+    "buffet_dinner": "Buffet Dinner",
+    "breakfast_to_dinner": "Buffet - Breakfast to Dinner",
+    "bbq_buffet": "BBQ Buffet",
+    "gaming_seafood": "Gaming Seafood Buffet",
+    # Food stations
+    "bao_station": "Bao Station",
+    "pasta_station": "Pasta Station",
+    "taco_station": "Taco Station",
+    "hot_food_station": "Hot Food Station",
+    "cheese_station": "Cheese Station",
+    "smoker_station": "Smoker Station",
+    "carving_station": "Carving Station",
+    "paella_station": "Paella Station",
+    "poke_station": "Poke Station",
+    "platter_station": "Platter Station",
+    # Other
+    "canape": "Canapé",
+    "dessert": "Dessert",
+    "dietary": "Dietary",
+    "smoothie_station": "Smoothie Station",
+    "juice_buffet": "Juice Buffet",
+    "tc_station": "T&C Station",
+    "coffee_cart": "Coffee Cart",
+    # Level 7 Cocktail
+    "level7_cocktail_250": "Level 7 Cocktail 250 pax",
+    "level7_cocktail_500": "Level 7 Cocktail 500 pax",
+    "level7_cocktail_1000": "Level 7 Cocktail 1000 pax",
 }
 
 PLENARY_SUB_TYPES = {
-    "boardroom": "Boardroom - Plenary",
-    "executive": "Boardroom - Executive",
+    "boardroom_plenary": "Boardroom - Plenary",
+    "boardroom_executive": "Boardroom - Executive",
+    "welcome_elevate": "Welcome Elevate",
+    "transformation": "Transformation",
+    "fb_onboarding": "F+B Onboarding",
 }
 
 
