@@ -37,12 +37,21 @@ def compute_totals(event: EventOrder) -> WorksheetOutput:
             item.value for item in items if item.money_type != "cash"
         )
 
-        # Venue hire (shortfall) is reduced by consumption revenue
-        # Consumption adds to F&B, which reduces the minimum spend shortfall
+        # Venue hire SHORTFALL is reduced by consumption revenue
+        # But regular venue hire (like Green Room Hire) is NOT reduced
+        # Only reduce if there are shortfall items (identified by "Shortfall" in type)
         if category == "venue_hire" and consumption_total > 0:
-            reduction = min(delphi_total, consumption_total)
-            delphi_total = max(0, delphi_total - reduction)
-            opera_total = max(0, opera_total - reduction)
+            shortfall_items = [
+                item for item in items
+                if "shortfall" in item.type.lower() or "minimum" in item.type.lower()
+            ]
+            if shortfall_items:
+                # Only reduce shortfall portion, not regular hire
+                shortfall_total = sum(item.value for item in shortfall_items)
+                regular_total = delphi_total - shortfall_total
+                reduced_shortfall = max(0, shortfall_total - consumption_total)
+                delphi_total = regular_total + reduced_shortfall
+                opera_total = regular_total + reduced_shortfall
 
         totals.append(
             CategoryTotals(

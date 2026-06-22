@@ -68,6 +68,7 @@ def _extract_column_text(page) -> str:
 
     # Identify full-width table rows (spans both columns with pricing patterns)
     # These should be kept as single lines, not split by column
+    # Specifically looking for schedule table rows which START with time patterns
     full_width_lines = set()
     for top, line_words in lines_by_top.items():
         if len(line_words) < 2:
@@ -79,10 +80,22 @@ def _extract_column_text(page) -> str:
         spans_width = min_x < page_width * 0.33 and max_x > page_width * 0.67
         # Contains pricing pattern ($ symbol)
         has_price = any('$' in w['text'] for w in line_words)
-        # Contains a quantity (3+ digit number common for pax counts)
+        # Contains a quantity (2+ digit number common for pax counts)
         has_qty = any(w['text'].isdigit() and len(w['text']) >= 2 for w in line_words)
 
-        if spans_width and has_price and has_qty:
+        # Schedule table rows have specific structure:
+        # They contain time patterns like "07:00" or time ranges
+        # Sort words by x position to check leftmost content
+        sorted_words = sorted(line_words, key=lambda w: w['x0'])
+        line_text = ' '.join(w['text'] for w in sorted_words)
+
+        # Check for schedule table pattern: contains time like "HH:MM" early in the line
+        has_time_pattern = bool(re.search(r'\d{1,2}:\d{2}', line_text[:30]))
+
+        # Also check for day/date headers which span width
+        is_date_header = bool(re.search(r'(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)', line_text, re.IGNORECASE))
+
+        if spans_width and has_price and has_qty and (has_time_pattern or is_date_header):
             full_width_lines.add(top)
 
     def reconstruct_text(word_list):
@@ -309,6 +322,11 @@ def parse_line(line: str) -> Optional[ParsedLine]:
     """
     line_lower = line.lower()
 
+    # Skip "estimated consumption" lines - these are informational estimates, not billable charges
+    # E.g., "25 Pax @ $17.00 Estimated consumption per person" is just planning info
+    if "estimated consumption" in line_lower:
+        return None
+
     # Day delegate package: "Package Name Qty $Price" (per person)
     # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
     # E.g., "Full Day Delegate 500 $115.00"
@@ -337,10 +355,13 @@ def parse_line(line: str) -> Optional[ParsedLine]:
         )
 
     # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
+    # Note: Column extraction may reorder - venue can appear before or after time
     # GTD column is NOT a multiplier - it's just guest count
     # Allow optional trailing content after price (e.g., checkmarks in "Inc. Package" column)
-    schedule_rental_match = re.search(
-        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
+    # Skip if this looks like a security pattern (has "Guard" and "Per Hour")
+    is_security_line = "guard" in line_lower and "per hour" in line_lower
+    schedule_rental_match = None if is_security_line else re.search(
+        r"(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
         line,
     )
     if schedule_rental_match:
@@ -348,26 +369,46 @@ def parse_line(line: str) -> Optional[ParsedLine]:
         # Only match if price is non-zero (skip $.00 rows)
         if price > 0:
             full_text = schedule_rental_match.group(3).strip()
+            # Also capture any text BEFORE the time (venue name from column reordering)
+            prefix = line[:schedule_rental_match.start(1)].strip()
+            if prefix:
+                full_text = f"{prefix} {full_text}"
             function_name = full_text
             venue_found = None
-            # Clean up function name - remove venue/setup info that comes after
+            # Clean up function name - remove venue/setup info
             # Look for common venue names and truncate there
-            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
+            for venue_marker in ["Story Bridge + Moreton Room", "Story Bridge + Moreton",
+                                 "Story Bridge", "Brisbane Ballroom",
+                                 "Business Centre", "Event Centre", "Conference",
                                  "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow",
-                                 "Paddington Room", "South Bank Room", "Moreton Room", "Ascot", "Teneriffe",
-                                 "Level 7", "Level 2", "Green Room"]:
+                                 "Paddington Room", "South Bank Room", "Moreton Room", "Moreton", "Ascot", "Teneriffe",
+                                 "Level 7", "Level 2", "Green Room", "Cabaret", "Cocktail", "Boardroom", "Room"]:
                 if venue_marker in function_name:
                     venue_found = venue_marker
-                    function_name = function_name.split(venue_marker)[0].strip()
+                    # Remove venue marker and everything after/before it that's setup info
+                    parts = function_name.split(venue_marker)
+                    # Find the part that looks like a function name (not setup type)
+                    for part in parts:
+                        part = part.strip()
+                        if part and part.lower() not in ("cabaret", "cocktail", "theatre", "classroom", "boardroom", "flow", "buffet"):
+                            # Remove trailing numbers and setup types
+                            part = re.sub(r"\s+(Cabaret|Cocktail|Theatre|Classroom|Boardroom|Flow|Buffet)\s*\d*\s*$", "", part, flags=re.IGNORECASE)
+                            part = re.sub(r"\s+\d+\s*$", "", part)
+                            if part:
+                                function_name = part
+                                break
                     break
             # Also remove trailing numbers (GTD column that got included)
             function_name = re.sub(r"\s+\d+\s*$", "", function_name)
+            # Remove any remaining setup type suffixes
+            function_name = re.sub(r"\s+(Cabaret|Cocktail|Theatre|Classroom|Boardroom|Flow|Buffet)\s*$", "", function_name, flags=re.IGNORECASE)
             # If function name is empty after cleanup, use the venue name
             if not function_name and venue_found:
                 function_name = venue_found
-            if function_name:
+            # Skip if no valid function name
+            if function_name and function_name.strip():
                 return ParsedLine(
-                    description=f"{function_name} (Venue Rental)",
+                    description=f"{function_name.strip()} (Venue Rental)",
                     basis="flat",
                     value=price,
                     money_type="contracted",
@@ -603,6 +644,11 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
     """
     line_lower = line.lower()
 
+    # Skip "estimated consumption" lines - these are informational estimates, not billable charges
+    # E.g., "25 Pax @ $17.00 Estimated consumption per person" is just planning info
+    if "estimated consumption" in line_lower:
+        return None
+
     # Day delegate package: "Package Name Qty $Price" (per person)
     # E.g., "$89 Half Day Executive Meeting Package AM 15 $89.00"
     # E.g., "Full Day Delegate 500 $115.00"
@@ -637,10 +683,13 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         return (parsed, trace)
 
     # Schedule table row with rental fee: "HH:MM - HH:MM Function Name ... $X.XX"
+    # Note: Column extraction may reorder - venue can appear before or after time
     # GTD column is NOT a multiplier - it's just guest count
     # Allow optional trailing content after price (e.g., checkmarks in "Inc. Package" column)
-    schedule_rental_match = re.search(
-        r"^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
+    # Skip if this looks like a security pattern (has "Guard" and "Per Hour")
+    is_security_line = "guard" in line_lower and "per hour" in line_lower
+    schedule_rental_match = None if is_security_line else re.search(
+        r"(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})\s+(.+?)\s+\$([\d,]+\.?\d*)",
         line,
     )
     if schedule_rental_match:
@@ -648,25 +697,45 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         # Only match if price is non-zero (skip $.00 rows)
         if price > 0:
             full_text = schedule_rental_match.group(3).strip()
+            # Also capture any text BEFORE the time (venue name from column reordering)
+            prefix = line[:schedule_rental_match.start(1)].strip()
+            if prefix:
+                full_text = f"{prefix} {full_text}"
             function_name = full_text
             venue_found = None
-            # Clean up function name - remove venue/setup info that comes after
-            for venue_marker in ["Brisbane Ballroom", "Business Centre", "Event Centre", "Conference",
+            # Clean up function name - remove venue/setup info
+            for venue_marker in ["Story Bridge + Moreton Room", "Story Bridge + Moreton",
+                                 "Story Bridge", "Brisbane Ballroom",
+                                 "Business Centre", "Event Centre", "Conference",
                                  "New Farm Room", "Mt Coot-Tha Room", "Classroom", "Theatre", "Buffet", "Flow",
-                                 "Paddington Room", "South Bank Room", "Moreton Room", "Ascot", "Teneriffe",
-                                 "Level 7", "Level 2", "Green Room"]:
+                                 "Paddington Room", "South Bank Room", "Moreton Room", "Moreton", "Ascot", "Teneriffe",
+                                 "Level 7", "Level 2", "Green Room", "Cabaret", "Cocktail", "Boardroom", "Room"]:
                 if venue_marker in function_name:
                     venue_found = venue_marker
-                    function_name = function_name.split(venue_marker)[0].strip()
+                    # Remove venue marker and everything after/before it that's setup info
+                    parts = function_name.split(venue_marker)
+                    # Find the part that looks like a function name (not setup type)
+                    for part in parts:
+                        part = part.strip()
+                        if part and part.lower() not in ("cabaret", "cocktail", "theatre", "classroom", "boardroom", "flow", "buffet"):
+                            # Remove trailing numbers and setup types
+                            part = re.sub(r"\s+(Cabaret|Cocktail|Theatre|Classroom|Boardroom|Flow|Buffet)\s*\d*\s*$", "", part, flags=re.IGNORECASE)
+                            part = re.sub(r"\s+\d+\s*$", "", part)
+                            if part:
+                                function_name = part
+                                break
                     break
             # Also remove trailing numbers (GTD column that got included)
             function_name = re.sub(r"\s+\d+\s*$", "", function_name)
+            # Remove any remaining setup type suffixes
+            function_name = re.sub(r"\s+(Cabaret|Cocktail|Theatre|Classroom|Boardroom|Flow|Buffet)\s*$", "", function_name, flags=re.IGNORECASE)
             # If function name is empty after cleanup, use the venue name
             if not function_name and venue_found:
                 function_name = venue_found
-            if function_name:
+            # Skip if no valid function name
+            if function_name and function_name.strip():
                 parsed = ParsedLine(
-                    description=f"{function_name} (Venue Rental)",
+                    description=f"{function_name.strip()} (Venue Rental)",
                     basis="flat",
                     value=price,
                     money_type="contracted",
