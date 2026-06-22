@@ -568,20 +568,36 @@ def render_packing():
             horizontal=True,
             key="packing_courses"
         )
-        linen_color = st.radio(
-            "Linen Colour",
+        has_tc = st.checkbox("Preset Tea & Coffee", key="packing_tc")
+        has_canapes = st.checkbox("Canapés", key="packing_canapes")
+        has_foh_bar = st.checkbox("FOH Bar Required", key="packing_foh")
+
+    with opt_col2:
+        st.markdown("**Linen Colours**")
+        napkin_color = st.radio(
+            "Napkins",
             ["black", "white"],
             horizontal=True,
             format_func=lambda x: x.title(),
-            key="packing_linen"
+            key="packing_napkin_color"
+        )
+        underliner_color = st.radio(
+            "Underliners",
+            ["black", "white"],
+            horizontal=True,
+            format_func=lambda x: x.title(),
+            key="packing_underliner_color"
         )
 
-    with opt_col2:
-        has_tc = st.checkbox("Preset Tea & Coffee", key="packing_tc")
-        has_canapes = st.checkbox("Canapés", key="packing_canapes")
-
     with opt_col3:
-        has_foh_bar = st.checkbox("FOH Bar Required", key="packing_foh")
+        st.markdown("&nbsp;")  # Spacer to align with col2
+        round_color = st.radio(
+            "Rounds (Tablecloths)",
+            ["black", "white"],
+            horizontal=True,
+            format_func=lambda x: x.title(),
+            key="packing_round_color"
+        )
 
     st.divider()
 
@@ -597,7 +613,9 @@ def render_packing():
             has_tc=has_tc,
             has_foh_bar=has_foh_bar,
             has_canapes=has_canapes,
-            linen_color=linen_color,
+            napkin_color=napkin_color,
+            underliner_color=underliner_color,
+            round_color=round_color,
         )
         st.session_state.packing_list = packing_list
         st.rerun()
@@ -611,7 +629,7 @@ def render_packing():
         # Event summary
         st.markdown(f"""
         **{packing_list.event_name}** | {packing_list.event_date} | {packing_list.location}
-        **{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | {packing_list.linen_color.title()} linen
+        **{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | Napkins: {packing_list.napkin_color.title()}, Underliners: {packing_list.underliner_color.title()}, Rounds: {packing_list.round_color.title()}
         """)
 
         st.divider()

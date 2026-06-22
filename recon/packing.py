@@ -81,7 +81,9 @@ class PackingList:
     has_tc: bool  # Preset tea & coffee
     has_foh_bar: bool
     has_canapes: bool
-    linen_color: str  # "black" or "white"
+    napkin_color: str  # "black" or "white"
+    underliner_color: str  # "black" or "white"
+    round_color: str  # "black" or "white" (tablecloths)
 
     # Items
     items: List[PackingListItem] = field(default_factory=list)
@@ -139,8 +141,8 @@ PACKING_ITEMS: List[PackingItem] = [
                 condition="has_tc"),
     PackingItem("tea_spoon", "Tea Spoon", "table_set", "per_pax",
                 condition="has_tc"),
-    PackingItem("underliner_plate", "Underliner Plate", "table_set", "per_table_3",
-                default_notes="Same colour as napkins"),
+    PackingItem("black_underliner", "Black Underliner Plate", "table_set", "per_table_3"),
+    PackingItem("white_underliner", "White Underliner Plate", "table_set", "per_table_3"),
     PackingItem("table_numbers", "Table Numbers & Stands", "table_set", "per_table"),
     PackingItem("menu_holders", "Menu Holders", "table_set", "per_table"),
     PackingItem("salt_pepper", "Salt & Pepper Sets", "table_set", "per_table",
@@ -214,7 +216,9 @@ def generate_packing_list(
     has_tc: bool,
     has_foh_bar: bool,
     has_canapes: bool,
-    linen_color: str,
+    napkin_color: str,
+    underliner_color: str,
+    round_color: str,
 ) -> PackingList:
     """Generate a packing list with calculated quantities."""
 
@@ -239,14 +243,21 @@ def generate_packing_list(
         if item.id == "entree_fork" and courses == 3:
             qty = pax * 2
 
-        # Handle linen color selection
-        if item.id == "black_napkins" and linen_color != "black":
+        # Handle color selection for napkins, underliners, and rounds
+        # Napkins
+        if item.id == "black_napkins" and napkin_color != "black":
             qty = 0
-        elif item.id == "white_napkins" and linen_color != "white":
+        elif item.id == "white_napkins" and napkin_color != "white":
             qty = 0
-        elif item.id == "black_rounds" and linen_color != "black":
+        # Underliners
+        elif item.id == "black_underliner" and underliner_color != "black":
             qty = 0
-        elif item.id == "white_rounds" and linen_color != "white":
+        elif item.id == "white_underliner" and underliner_color != "white":
+            qty = 0
+        # Rounds (tablecloths)
+        elif item.id == "black_rounds" and round_color != "black":
+            qty = 0
+        elif item.id == "white_rounds" and round_color != "white":
             qty = 0
 
         items.append(PackingListItem(
@@ -272,7 +283,9 @@ def generate_packing_list(
         has_tc=has_tc,
         has_foh_bar=has_foh_bar,
         has_canapes=has_canapes,
-        linen_color=linen_color,
+        napkin_color=napkin_color,
+        underliner_color=underliner_color,
+        round_color=round_color,
         items=items,
         created_at=datetime.now().isoformat(),
         status="draft",
