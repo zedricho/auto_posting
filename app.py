@@ -17,7 +17,8 @@ from recon.workflow import (
 )
 from recon.packing import (
     generate_packing_list, get_items_by_category, save_packing_list,
-    CATEGORY_LABELS, CATEGORY_ORDER, PackingList,
+    PackingList, EVENT_TYPES, BUFFET_SUB_TYPES, PLENARY_SUB_TYPES,
+    get_category_order, get_category_labels,
 )
 
 
@@ -510,6 +511,14 @@ def render_packing():
     # ============ STEP 2: EVENT CONFIGURATION ============
     st.markdown("### Step 2: Event Configuration")
 
+    # Event type selector
+    event_type = st.selectbox(
+        "Event Type",
+        options=list(EVENT_TYPES.keys()),
+        format_func=lambda x: EVENT_TYPES[x],
+        key="packing_event_type"
+    )
+
     col1, col2 = st.columns(2)
 
     with col1:
@@ -541,13 +550,26 @@ def render_packing():
             step=10,
             key="packing_pax"
         )
-        tables = st.number_input(
-            "Table Count",
-            min_value=1, max_value=200,
-            value=default_tables,
-            step=1,
-            key="packing_tables"
-        )
+
+        # Tables for plated/buffet, trestles for plenary
+        if event_type == "plenary":
+            trestle_count = st.number_input(
+                "Trestle Count",
+                min_value=1, max_value=50,
+                value=4,
+                step=1,
+                key="packing_trestles"
+            )
+            tables = default_tables  # Keep for compatibility
+        else:
+            tables = st.number_input(
+                "Table Count",
+                min_value=1, max_value=200,
+                value=default_tables,
+                step=1,
+                key="packing_tables"
+            )
+            trestle_count = 0
 
         # Show if overriding EO suggestion
         if st.session_state.packing_eo_pax and pax != st.session_state.packing_eo_pax:
@@ -558,46 +580,161 @@ def render_packing():
     # ============ STEP 3: SERVICE OPTIONS ============
     st.markdown("### Step 3: Service Options")
 
-    opt_col1, opt_col2, opt_col3 = st.columns(3)
+    # Initialize default values for all event types
+    courses = 2
+    has_tc = False
+    has_canapes = False
+    has_foh_bar = False
+    napkin_color = "black"
+    underliner_color = "white"
+    round_color = "black"
+    sub_type = ""
+    buffet_setups = 1
+    hot_items = 0
+    cold_items = 0
+    tc_stations = 1
+    water_stations = 1
+    riser_color = "white"
+    linen_style = "black_fitted"
 
-    with opt_col1:
-        courses = st.radio(
-            "Courses",
-            [1, 2, 3],
-            index=1,  # Default to 2 courses
-            horizontal=True,
-            key="packing_courses"
-        )
-        has_tc = st.checkbox("Preset Tea & Coffee", key="packing_tc")
-        has_canapes = st.checkbox("Canapés", key="packing_canapes")
-        has_foh_bar = st.checkbox("FOH Bar Required", key="packing_foh")
+    # === PLATED OPTIONS ===
+    if event_type == "plated":
+        opt_col1, opt_col2, opt_col3 = st.columns(3)
 
-    with opt_col2:
-        st.markdown("**Linen Colours**")
-        napkin_color = st.radio(
-            "Napkins",
-            ["black", "white"],
-            horizontal=True,
-            format_func=lambda x: x.title(),
-            key="packing_napkin_color"
-        )
-        underliner_color = st.radio(
-            "Underliners",
-            ["black", "white"],
-            horizontal=True,
-            format_func=lambda x: x.title(),
-            key="packing_underliner_color"
+        with opt_col1:
+            courses = st.radio(
+                "Courses",
+                [1, 2, 3],
+                index=1,  # Default to 2 courses
+                horizontal=True,
+                key="packing_courses"
+            )
+            has_tc = st.checkbox("Preset Tea & Coffee", key="packing_tc")
+            has_canapes = st.checkbox("Canapés", key="packing_canapes")
+            has_foh_bar = st.checkbox("FOH Bar Required", key="packing_foh")
+
+        with opt_col2:
+            st.markdown("**Linen Colours**")
+            napkin_color = st.radio(
+                "Napkins",
+                ["black", "white"],
+                horizontal=True,
+                format_func=lambda x: x.title(),
+                key="packing_napkin_color"
+            )
+            underliner_color = st.radio(
+                "Underliners",
+                ["black", "white"],
+                horizontal=True,
+                format_func=lambda x: x.title(),
+                key="packing_underliner_color"
+            )
+
+        with opt_col3:
+            st.markdown("&nbsp;")  # Spacer to align with col2
+            round_color = st.radio(
+                "Rounds (Tablecloths)",
+                ["black", "white"],
+                horizontal=True,
+                format_func=lambda x: x.title(),
+                key="packing_round_color"
+            )
+
+    # === BUFFET OPTIONS ===
+    elif event_type == "buffet":
+        # Sub-type selection
+        sub_type = st.selectbox(
+            "Buffet Type",
+            options=list(BUFFET_SUB_TYPES.keys()),
+            format_func=lambda x: BUFFET_SUB_TYPES[x],
+            key="packing_buffet_subtype"
         )
 
-    with opt_col3:
-        st.markdown("&nbsp;")  # Spacer to align with col2
-        round_color = st.radio(
-            "Rounds (Tablecloths)",
-            ["black", "white"],
-            horizontal=True,
-            format_func=lambda x: x.title(),
-            key="packing_round_color"
+        opt_col1, opt_col2, opt_col3 = st.columns(3)
+
+        with opt_col1:
+            st.markdown("**Buffet Setup**")
+            buffet_setups = st.number_input(
+                "Number of Buffet Setups",
+                min_value=1, max_value=10,
+                value=1,
+                step=1,
+                key="packing_buffet_setups"
+            )
+            hot_items = st.number_input(
+                "Hot Items",
+                min_value=0, max_value=20,
+                value=3,
+                step=1,
+                key="packing_hot_items"
+            )
+            cold_items = st.number_input(
+                "Cold Items",
+                min_value=0, max_value=20,
+                value=2,
+                step=1,
+                key="packing_cold_items"
+            )
+
+        with opt_col2:
+            st.markdown("**Stations**")
+            tc_stations = st.number_input(
+                "Tea & Coffee Stations",
+                min_value=0, max_value=10,
+                value=1,
+                step=1,
+                key="packing_tc_stations"
+            )
+            water_stations = st.number_input(
+                "Water Stations",
+                min_value=0, max_value=10,
+                value=1,
+                step=1,
+                key="packing_water_stations"
+            )
+            has_tc = tc_stations > 0  # Auto-enable TC if stations > 0
+
+        with opt_col3:
+            st.markdown("**Display Options**")
+            riser_color = st.radio(
+                "Riser Sets",
+                ["white", "black"],
+                horizontal=True,
+                format_func=lambda x: x.title(),
+                key="packing_riser_color"
+            )
+
+    # === PLENARY OPTIONS ===
+    elif event_type == "plenary":
+        # Sub-type selection
+        sub_type = st.selectbox(
+            "Plenary Style",
+            options=list(PLENARY_SUB_TYPES.keys()),
+            format_func=lambda x: PLENARY_SUB_TYPES[x],
+            key="packing_plenary_subtype"
         )
+
+        opt_col1, opt_col2 = st.columns(2)
+
+        with opt_col1:
+            st.markdown("**Table Linen**")
+            linen_style = st.radio(
+                "Linen Style",
+                ["black_fitted", "white_fitted", "naked"],
+                format_func=lambda x: {"black_fitted": "Black Fitted", "white_fitted": "White Fitted", "naked": "Naked Trestles"}[x],
+                key="packing_linen_style"
+            )
+
+        with opt_col2:
+            st.markdown("**Stations**")
+            tc_stations = st.number_input(
+                "Tea & Coffee Stations",
+                min_value=0, max_value=10,
+                value=0,
+                step=1,
+                key="packing_plenary_tc_stations"
+            )
+            has_tc = tc_stations > 0  # Auto-enable TC if stations > 0
 
     st.divider()
 
@@ -609,6 +746,9 @@ def render_packing():
             location=location,
             pax=pax,
             tables=tables,
+            event_type=event_type,
+            sub_type=sub_type,
+            # Plated options
             courses=courses,
             has_tc=has_tc,
             has_foh_bar=has_foh_bar,
@@ -616,6 +756,16 @@ def render_packing():
             napkin_color=napkin_color,
             underliner_color=underliner_color,
             round_color=round_color,
+            # Buffet options
+            buffet_setups=buffet_setups,
+            hot_items=hot_items,
+            cold_items=cold_items,
+            tc_stations=tc_stations,
+            water_stations=water_stations,
+            riser_color=riser_color,
+            # Plenary options
+            trestle_count=trestle_count,
+            linen_style=linen_style,
         )
         st.session_state.packing_list = packing_list
         st.rerun()
@@ -626,34 +776,54 @@ def render_packing():
 
         st.markdown("### Step 4: Review & Adjust Items")
 
-        # Event summary
+        # Event summary - dynamic based on event type
+        event_type_label = EVENT_TYPES.get(packing_list.event_type, "Event")
+        summary_line1 = f"**{packing_list.event_name}** | {packing_list.event_date} | {packing_list.location}"
+
+        if packing_list.event_type == "plated":
+            summary_line2 = f"**{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | Napkins: {packing_list.napkin_color.title()}, Underliners: {packing_list.underliner_color.title()}, Rounds: {packing_list.round_color.title()}"
+        elif packing_list.event_type == "buffet":
+            sub_label = BUFFET_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
+            summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {packing_list.buffet_setups} setup(s) | Hot: {packing_list.hot_items}, Cold: {packing_list.cold_items}"
+        elif packing_list.event_type == "plenary":
+            sub_label = PLENARY_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
+            summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {packing_list.trestle_count} trestles"
+        else:
+            summary_line2 = f"**{packing_list.pax} pax**"
+
         st.markdown(f"""
-        **{packing_list.event_name}** | {packing_list.event_date} | {packing_list.location}
-        **{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | Napkins: {packing_list.napkin_color.title()}, Underliners: {packing_list.underliner_color.title()}, Rounds: {packing_list.round_color.title()}
+        {summary_line1}
+        {summary_line2}
         """)
 
         st.divider()
 
-        # Items by category
+        # Items by category - use dynamic category order and labels
         items_by_cat = get_items_by_category(packing_list)
+        category_order = get_category_order(packing_list.event_type)
+        category_labels = get_category_labels(packing_list.event_type)
 
-        for category in CATEGORY_ORDER:
+        # Optional categories to skip when empty
+        optional_categories = ["bar_foh", "tc", "canape", "tc_station", "water_station"]
+
+        for category in category_order:
             items = items_by_cat.get(category, [])
             # Only show categories with items that have qty > 0 or are always shown
             active_items = [i for i in items if i.final_qty > 0]
 
-            if not active_items and category in ["bar_foh", "tc", "canape"]:
+            if not active_items and category in optional_categories:
                 continue  # Skip empty optional categories
 
-            with st.expander(f"**{CATEGORY_LABELS[category]}** ({len(active_items)} items)", expanded=True):
+            category_label = category_labels.get(category, category.replace("_", " ").title())
+            with st.expander(f"**{category_label}** ({len(active_items)} items)", expanded=True):
                 if not items:
                     st.caption("No items in this category")
                     continue
 
                 # Create editable table
                 for i, item in enumerate(items):
-                    if item.final_qty == 0 and category in ["linen"]:
-                        # Skip zero-qty linen (wrong color)
+                    if item.final_qty == 0 and category in ["linen", "plenary_linen", "buffet_napkins"]:
+                        # Skip zero-qty linen (wrong color/style)
                         continue
 
                     col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
@@ -746,24 +916,50 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
     worksheet.write(row, 3, str(packing_list.event_date) if packing_list.event_date else "")
     row += 1
 
+    worksheet.write(row, 0, "EVENT TYPE:", header_fmt)
+    event_type_label = EVENT_TYPES.get(packing_list.event_type, packing_list.event_type)
+    if packing_list.sub_type:
+        if packing_list.event_type == "buffet":
+            sub_label = BUFFET_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
+        else:
+            sub_label = PLENARY_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
+        event_type_label = f"{event_type_label} - {sub_label}"
+    worksheet.write(row, 3, event_type_label)
+    row += 1
+
     worksheet.write(row, 0, "GUEST COUNT:", header_fmt)
     worksheet.write(row, 1, packing_list.pax)
     row += 1
 
-    worksheet.write(row, 0, "TABLE COUNT:", header_fmt)
-    worksheet.write(row, 1, packing_list.tables)
+    # Show tables or trestles depending on event type
+    if packing_list.event_type == "plenary":
+        worksheet.write(row, 0, "TRESTLE COUNT:", header_fmt)
+        worksheet.write(row, 1, packing_list.trestle_count)
+    else:
+        worksheet.write(row, 0, "TABLE COUNT:", header_fmt)
+        worksheet.write(row, 1, packing_list.tables)
     row += 1
 
     worksheet.write(row, 0, "EVENT LOCATION:", header_fmt)
     worksheet.write(row, 3, packing_list.location)
     row += 1
 
+    # Buffet-specific info
+    if packing_list.event_type == "buffet":
+        worksheet.write(row, 0, "BUFFET SETUPS:", header_fmt)
+        worksheet.write(row, 1, packing_list.buffet_setups)
+        worksheet.write(row, 2, f"Hot: {packing_list.hot_items}")
+        worksheet.write(row, 3, f"Cold: {packing_list.cold_items}")
+        row += 1
+
     row += 1  # Empty row
 
-    # Items by category
+    # Items by category - use dynamic category order and labels
     items_by_cat = get_items_by_category(packing_list)
+    category_order = get_category_order(packing_list.event_type)
+    category_labels = get_category_labels(packing_list.event_type)
 
-    for category in CATEGORY_ORDER:
+    for category in category_order:
         items = items_by_cat.get(category, [])
         active_items = [i for i in items if i.final_qty > 0]
 
@@ -771,7 +967,8 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
             continue
 
         # Category header
-        worksheet.write(row, 0, CATEGORY_LABELS[category], section_fmt)
+        category_label = category_labels.get(category, category.replace("_", " ").title())
+        worksheet.write(row, 0, category_label, section_fmt)
         worksheet.write(row, 1, "QUANTITY", section_fmt)
         worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
         worksheet.write(row, 3, "NOTES", section_fmt)
