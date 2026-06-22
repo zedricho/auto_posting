@@ -80,8 +80,8 @@ def _extract_column_text(page) -> str:
         spans_width = min_x < page_width * 0.33 and max_x > page_width * 0.67
         # Contains pricing pattern ($ symbol)
         has_price = any('$' in w['text'] for w in line_words)
-        # Contains a quantity (2+ digit number common for pax counts)
-        has_qty = any(w['text'].isdigit() and len(w['text']) >= 2 for w in line_words)
+        # Contains a quantity (any digit - GTD can be single digit like "5")
+        has_qty = any(w['text'].isdigit() for w in line_words)
 
         # Schedule table rows have specific structure:
         # They contain time patterns like "07:00" or time ranges
