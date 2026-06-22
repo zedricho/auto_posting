@@ -491,6 +491,26 @@ def parse_line(line: str) -> Optional[ParsedLine]:
             posts_to="both",
         )
 
+    # Reversed per person pattern: $X Per Person N Pax @ (column reordering artifact)
+    # E.g., "$28.00 Per Person 15 Pax @" instead of "15 Pax @ $28.00 Per Person"
+    reversed_pax_match = re.search(
+        r"\$?([\d,]+\.?\d*)\s*Per\s*Person\s*(\d+)\s*Pax",
+        line,
+        re.IGNORECASE,
+    )
+    if reversed_pax_match:
+        price = _parse_price(reversed_pax_match.group(1))
+        pax = int(reversed_pax_match.group(2))
+        return ParsedLine(
+            description=line.strip(),
+            basis="per_person",
+            pax=pax,
+            unit_price=price,
+            value=round(pax * price, 2),
+            money_type="contracted",
+            posts_to="both",
+        )
+
     # Flat "For This Event" pattern: @ $X For This Event
     flat_event_match = re.search(
         r"@\s*\$?([\d,]+\.?\d*)\s*For This Event",
@@ -870,6 +890,35 @@ def parse_line_with_trace(line: str) -> Optional[Tuple[ParsedLine, MatchTrace]]:
         )
         return (parsed, trace)
 
+    # Reversed per person pattern: $X Per Person N Pax @ (column reordering artifact)
+    reversed_pax_match = re.search(
+        r"\$?([\d,]+\.?\d*)\s*Per\s*Person\s*(\d+)\s*Pax",
+        line,
+        re.IGNORECASE,
+    )
+    if reversed_pax_match:
+        price = _parse_price(reversed_pax_match.group(1))
+        pax = int(reversed_pax_match.group(2))
+        value = round(pax * price, 2)
+
+        parsed = ParsedLine(
+            description=line.strip(),
+            basis="per_person",
+            pax=pax,
+            unit_price=price,
+            value=value,
+            money_type="contracted",
+            posts_to="both",
+        )
+        trace = MatchTrace(
+            pattern_name="per_person_reversed",
+            matched_text=reversed_pax_match.group(0),
+            extracted={"pax": pax, "price": price},
+            calculation=f"{pax} × ${price:.2f} (reversed format)",
+            value=value,
+        )
+        return (parsed, trace)
+
     # Flat "For This Event" pattern: @ $X For This Event
     flat_event_match = re.search(
         r"@\s*\$?([\d,]+\.?\d*)\s*For This Event",
@@ -1110,8 +1159,12 @@ def _detect_section(text: str) -> Optional[str]:
             # Skip if followed by contact info patterns
             if re.search(r"audio\s*visual\s*[:\-]\s*\w", text_lower):
                 continue
-            # Only match standalone "AUDIO VISUAL" header
-            if text_lower.strip() in ["audio visual", "audio visual:"]:
+            # Skip "Audio Visual:" in header info section - this is contact info, not a section
+            # True section headers are "AUDIO VISUAL" (all caps) or have content after
+            if text.strip() == "Audio Visual:":
+                continue
+            # Only match standalone "AUDIO VISUAL" header (all caps or no colon)
+            if text_lower.strip() == "audio visual" or text.strip() == "AUDIO VISUAL":
                 return category
             continue
 
