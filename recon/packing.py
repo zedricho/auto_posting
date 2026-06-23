@@ -25,11 +25,45 @@ class PackingItem:
     default_notes: str = ""
 
     def calculate_qty(self, pax: int, tables: int, stations: int, options: Dict[str, Any]) -> int:
-        """Calculate quantity based on formula and event config."""
+        """Calculate quantity based on formula and event config.
+
+        Formulas match Excel packing sheet calculations:
+        - per_pax: =SUM(B3) - one per guest
+        - per_pax_1.5: =SUM(B3*1.5) - 1.5 per guest (glassware)
+        - per_pax_2: =SUM(B3*2) - 2 per guest
+        - per_pax_3: =SUM(B3*3) - 3 per guest (coasters)
+        - pax_div_4: =ROUNDUP(B3/4,0) - 1 per 4 guests (mint bowls)
+        - pax_div_5: =SUM(B3/5) - 1 per 5 guests (mints)
+        - per_table: =SUM(B4) - one per table
+        - per_table_2: =SUM(B4*2) - 2 per table
+        - per_table_3: =SUM(B4*3) - 3 per table (underliners)
+        - per_10_tables: =ROUNDUP(B4/10,0) - 1 per 10 tables
+        - per_trestle: one per trestle (plenary)
+        - per_buffet: =SUM(buffet_setups) - one per buffet setup
+        - per_buffet_4: =4*buffet_setups - 4 per buffet (side plates)
+        - per_hot_item: =SUM(hot_items) - one per hot item
+        - per_cold_item: =SUM(cold_items) - one per cold item
+        - hot_plus_cold: =SUM(hot+cold) - tongs, tong plates
+        - hot_plus_cold_x2: =SUM(hot+cold)*2 - double tongs
+        - per_chaffing_2: =2*chaffing_dishes - sternos (2 per chaffing)
+        - per_tc_station: one per T&C station
+        - per_tc_station_2: =2*tc_stations - urns (2 per station)
+        - per_tc_station_6: =6*tc_stations - underliner plates for TC
+        - per_water_station: one per water station
+        - manual: user fills in quantity
+        - fixed_N: fixed quantity N
+        """
         # Check condition first
         if self.condition:
             if not options.get(self.condition, False):
                 return 0
+
+        buffet_setups = options.get("buffet_setups", 1)
+        hot_items = options.get("hot_items", 0)
+        cold_items = options.get("cold_items", 0)
+        tc_stations = options.get("tc_stations", 0)
+        water_stations = options.get("water_stations", 0)
+        trestle_count = options.get("trestle_count", 0)
 
         # Calculate based on formula
         if self.formula == "per_pax":
@@ -38,6 +72,12 @@ class PackingItem:
             return math.ceil(pax * 1.5)
         elif self.formula == "per_pax_2":
             return pax * 2
+        elif self.formula == "per_pax_3":
+            return pax * 3
+        elif self.formula == "pax_div_4":
+            return math.ceil(pax / 4)
+        elif self.formula == "pax_div_5":
+            return math.ceil(pax / 5)
         elif self.formula == "per_table":
             return tables
         elif self.formula == "per_table_2":
@@ -46,14 +86,32 @@ class PackingItem:
             return tables * 3
         elif self.formula == "per_10_tables":
             return math.ceil(tables / 10)
+        elif self.formula == "per_trestle":
+            return trestle_count
+        elif self.formula == "per_buffet":
+            return buffet_setups
+        elif self.formula == "per_buffet_4":
+            return buffet_setups * 4
+        elif self.formula == "per_hot_item":
+            return hot_items
+        elif self.formula == "per_cold_item":
+            return cold_items
+        elif self.formula == "hot_plus_cold":
+            return hot_items + cold_items
+        elif self.formula == "hot_plus_cold_x2":
+            return (hot_items + cold_items) * 2
+        elif self.formula == "per_chaffing_2":
+            return hot_items * 2  # 2 sternos per chaffing dish
         elif self.formula == "per_station":
             return stations
-        elif self.formula == "per_buffet":
-            return options.get("buffet_setups", 1)
-        elif self.formula == "per_hot_item":
-            return options.get("hot_items", 0)
-        elif self.formula == "per_cold_item":
-            return options.get("cold_items", 0)
+        elif self.formula == "per_tc_station":
+            return tc_stations
+        elif self.formula == "per_tc_station_2":
+            return tc_stations * 2
+        elif self.formula == "per_tc_station_6":
+            return tc_stations * 6
+        elif self.formula == "per_water_station":
+            return water_stations
         elif self.formula == "manual":
             return 0  # User fills in
         elif self.formula.startswith("fixed_"):
@@ -282,43 +340,69 @@ PLATED_ITEMS: List[PackingItem] = [
 
 
 # ============ BUFFET ITEMS ============
+# Formulas based on Excel: Master Packing Sheets- Buffets (1).xlsx
 
 BUFFET_ITEMS: List[PackingItem] = [
     # === BUFFET SETUP ===
-    PackingItem("buffet_underliner", "Underliner Plates", "buffet_setup", "manual"),
+    # Underliner Plates: =SUM(B3) - per pax
+    PackingItem("buffet_underliner", "Underliner Plates", "buffet_setup", "per_pax"),
+    # Entrée Plate: =SUM(B3) - per pax
     PackingItem("buffet_entree_plate", "Entrée Plate", "buffet_setup", "per_pax"),
+    # Entrée Fork: =SUM(B3) - per pax
     PackingItem("buffet_entree_fork", "Entrée Fork", "buffet_setup", "per_pax",
                 default_notes="Prepped in pocket fold or silver basket"),
+    # Entrée Knife: =SUM(B3) - per pax
     PackingItem("buffet_entree_knife", "Entrée Knife", "buffet_setup", "per_pax",
                 default_notes="Prepped in pocket fold or silver basket"),
+    # Dessert Spoon: =SUM(B3) - per pax, when dessert
     PackingItem("buffet_dessert_spoon", "Dessert Spoon", "buffet_setup", "per_pax",
                 condition="has_dessert"),
-    PackingItem("buffet_tongs", "Tongs", "buffet_setup", "manual"),
+    # Tongs: =SUM(hot_items, cold_items) - one per menu item
+    PackingItem("buffet_tongs", "Tongs", "buffet_setup", "hot_plus_cold"),
+    # Serving Spoon: manual (varies by event)
     PackingItem("buffet_serving_spoon", "Serving Spoon", "buffet_setup", "manual"),
-    PackingItem("buffet_tong_plates", "Tong Plates", "buffet_setup", "manual"),
-    PackingItem("buffet_side_plates", "Side Plates", "buffet_setup", "manual",
+    # Tong Plates: =SUM(tongs) - same as tongs
+    PackingItem("buffet_tong_plates", "Tong Plates", "buffet_setup", "hot_plus_cold"),
+    # Side Plates: =4*buffet_setups - 4 per buffet for cocktail napkins
+    PackingItem("buffet_side_plates", "Side Plates", "buffet_setup", "per_buffet_4",
                 default_notes="For cocktail napkins"),
+    # White Riser Sets: =SUM(cold_items) - 1 set per cold item
     PackingItem("white_riser_sets", "White Riser Sets", "buffet_setup", "per_cold_item",
-                default_notes="1 set of each size per cold item"),
+                default_notes="Small & medium for every cold item"),
+    # Black Riser Sets: =SUM(cold_items) - 1 set per cold item
     PackingItem("black_riser_sets", "Black Riser Sets", "buffet_setup", "per_cold_item",
-                default_notes="1 set of each size per cold item"),
+                default_notes="Small & medium for every cold item"),
+    # Chaffing Dish: =SUM(hot_items) - 1 per hot item
     PackingItem("chaffing_dish", "Chaffing Dish", "buffet_setup", "per_hot_item",
                 default_notes="Rectangular unless otherwise stated"),
-    PackingItem("sternos", "Sternos", "buffet_setup", "manual",
+    # Sternos: =2*chaffing_dishes - 2 per chaffing dish
+    PackingItem("sternos", "Sternos", "buffet_setup", "per_chaffing_2",
                 default_notes="2 per chaffing dish"),
-    PackingItem("sterno_holders", "Sterno Holders", "buffet_setup", "manual"),
-    PackingItem("rectangle_plate", "Rectangle Plate", "buffet_setup", "manual"),
-    PackingItem("silver_baskets", "Silver Baskets", "buffet_setup", "manual"),
-    PackingItem("linen_napkins_basket", "Linen Napkins (for baskets)", "buffet_setup", "manual"),
+    # Sterno Holders: =SUM(sternos) - same as sternos
+    PackingItem("sterno_holders", "Sterno Holders", "buffet_setup", "per_chaffing_2"),
+    # Rectangle Plate: =2*pax for cutlery pocket folds (lunch)
+    PackingItem("rectangle_plate", "Rectangle Plate", "buffet_setup", "per_pax_2",
+                default_notes="For cutlery pocket folds"),
+    # Linen Napkins: =SUM(rectangle_plates) - for pocket fold
+    PackingItem("linen_napkins_pocketfold", "Linen Napkins (pocket fold)", "buffet_setup", "per_pax_2",
+                default_notes="For pocket fold"),
+    # Silver Baskets: manual
+    PackingItem("silver_baskets", "Silver Baskets", "buffet_setup", "manual",
+                default_notes="For cutlery display"),
+    # Salt & Pepper: =SUM(buffet_setups) - 1 per buffet
     PackingItem("salt_pepper_buffet", "Salt & Pepper Sets", "buffet_setup", "per_buffet"),
+    # A4 Menu Holders: =SUM(buffet_setups) - 1 per buffet
     PackingItem("a4_menu_holders", "A4 Acrylic Menu Holders", "buffet_setup", "per_buffet"),
-    PackingItem("small_label_holders", "Small Acrylic Label Holders", "buffet_setup", "manual"),
+    # Small Label Holders: =SUM(hot+cold)*buffet_setups - per item per buffet
+    PackingItem("small_label_holders", "Small Acrylic Label Holders", "buffet_setup", "hot_plus_cold",
+                default_notes="For menu item labels"),
 
     # === NAPKINS ===
-    PackingItem("white_cocktail_napkins", "White Cocktail Napkins", "buffet_napkins", "fixed_1",
-                default_notes="1 pack"),
-    PackingItem("black_cocktail_napkins", "Black Cocktail Napkins", "buffet_napkins", "fixed_1",
-                default_notes="1 pack"),
+    # Cocktail Napkins: =SUM(buffet_setups) - 1 pack per buffet
+    PackingItem("white_cocktail_napkins", "White Cocktail Napkins", "buffet_napkins", "per_buffet",
+                default_notes="1 pack per buffet"),
+    PackingItem("black_cocktail_napkins", "Black Cocktail Napkins", "buffet_napkins", "per_buffet",
+                default_notes="1 pack per buffet"),
     PackingItem("white_dinner_napkins", "White Dinner Napkins", "buffet_napkins", "fixed_1",
                 default_notes="1 pack"),
     PackingItem("black_dinner_napkins", "Black Dinner Napkins", "buffet_napkins", "fixed_1",
@@ -326,53 +410,89 @@ BUFFET_ITEMS: List[PackingItem] = [
     PackingItem("linen_napkins_pocket", "Linen Napkins (pocket fold)", "buffet_napkins", "per_pax"),
 
     # === T&C STATION ===
-    PackingItem("tc_teacups", "Teacups", "tc_station", "per_pax_1.5",
+    # Teacups: =SUM(B3) or 1.5x pax - per pax (adjust up for large events)
+    PackingItem("tc_teacups", "Teacups", "tc_station", "per_pax",
                 condition="has_tc"),
-    PackingItem("tc_saucers", "Saucers", "tc_station", "per_pax_1.5",
+    # Saucers: =SUM(teacups) - same as teacups
+    PackingItem("tc_saucers", "Saucers", "tc_station", "per_pax",
                 condition="has_tc"),
-    PackingItem("tc_teaspoons", "Teaspoons", "tc_station", "per_pax_1.5",
+    # Teaspoons: =SUM(teacups) - same as teacups
+    PackingItem("tc_teaspoons", "Teaspoons", "tc_station", "per_pax",
                 condition="has_tc", default_notes="Prepped in pocket folds"),
-    PackingItem("tc_urn_stands", "Urn Stands", "tc_station", "per_station",
+    # Urns: =SUM(tc_stations*2) - 2 per station
+    PackingItem("tc_urns", "Urns", "tc_station", "per_tc_station_2",
                 condition="has_tc"),
-    PackingItem("tc_urns", "Urns", "tc_station", "per_station",
+    # Urn Stands: =SUM(tc_stations*2) - 2 per station
+    PackingItem("tc_urn_stands", "Urn Stands", "tc_station", "per_tc_station_2",
                 condition="has_tc"),
-    PackingItem("tc_coffee_beans_dish", "Butter Dish (Coffee Beans)", "tc_station", "per_station",
+    # Butter Dish (Coffee Beans): =1*tc_stations - 1 per station
+    PackingItem("tc_coffee_beans_dish", "Butter Dish (Coffee Beans)", "tc_station", "per_tc_station",
                 condition="has_tc", default_notes="Prep coffee beans in container"),
-    PackingItem("tc_tea_leaves_dish", "Butter Dish (Tea Leaves)", "tc_station", "per_station",
+    # Butter Dish (Tea Leaves): =1*tc_stations - 1 per station
+    PackingItem("tc_tea_leaves_dish", "Butter Dish (Tea Leaves)", "tc_station", "per_tc_station",
                 condition="has_tc", default_notes="Prep tea leaves in container"),
-    PackingItem("tc_tea_box", "Tea Box", "tc_station", "per_station",
+    # Tea Box: =1*tc_stations - 1 per station
+    PackingItem("tc_tea_box", "Tea Box", "tc_station", "per_tc_station",
                 condition="has_tc", default_notes="Ensure full - mixed variety"),
-    PackingItem("tc_sugar_stands", "Gold Sugar Stands", "tc_station", "per_station",
+    # Gold Sugar Stands: per station
+    PackingItem("tc_sugar_stands", "Gold Sugar Stands", "tc_station", "per_tc_station",
                 condition="has_tc", default_notes="Ensure full - raw, white, equal"),
-    PackingItem("tc_underliner_flatfold", "Underliner Plates (with flatfold)", "tc_station", "manual",
+    # Sternos: per station
+    PackingItem("tc_sternos", "Sternos", "tc_station", "per_tc_station",
+                condition="has_tc", default_notes="Prep in sterno holders"),
+    # Sterno Holders: same as sternos
+    PackingItem("tc_sterno_holders", "Sterno Holders", "tc_station", "per_tc_station",
                 condition="has_tc"),
-    PackingItem("tc_label_holders", "Small Acrylic Label Holders", "tc_station", "manual",
+    # Underliner Plates: =6*tc_stations - 6 per station
+    PackingItem("tc_underliner_flatfold", "Underliner Plates (with flatfold)", "tc_station", "per_tc_station_6",
+                condition="has_tc"),
+    # Small Acrylic Label Holders: =SUM(underliners) - for hot water, coffee, milks
+    PackingItem("tc_label_holders", "Small Acrylic Label Holders", "tc_station", "per_tc_station_6",
                 condition="has_tc", default_notes="Hot water, coffee, milks"),
+    # Cocktail Napkins: 1 pack per station
+    PackingItem("tc_cocktail_napkins", "Cocktail Napkins", "tc_station", "per_tc_station",
+                condition="has_tc", default_notes="1 pack"),
+    # Side Plates: 4 per station for napkins
+    PackingItem("tc_side_plates", "Side Plates", "tc_station", "per_tc_station",
+                condition="has_tc", default_notes="For cocktail napkins"),
 
     # === WATER STATION ===
+    # Non-Alc Glasses: =SUM(B3) - per pax
     PackingItem("water_non_alc_glasses", "Non-Alc Glasses", "water_station", "per_pax"),
+    # Underliner Plates: manual (varies by setup)
     PackingItem("water_underliner", "Underliner Plates (with flatfold)", "water_station", "manual"),
 ]
 
 
 # ============ PLENARY ITEMS ============
+# Formulas based on Excel: Master Packing Sheet Plentary.xlsx
 
 PLENARY_ITEMS: List[PackingItem] = [
     # === LINEN ===
-    PackingItem("plenary_black_fitted", "Black Fitted Cloths", "plenary_linen", "per_table"),
-    PackingItem("plenary_white_fitted", "White Fitted Cloths", "plenary_linen", "per_table"),
-    PackingItem("plenary_naked_trestles", "Naked Trestles", "plenary_linen", "manual",
+    # Black Fitted Cloths: per trestle
+    PackingItem("plenary_black_fitted", "Black Fitted Cloths", "plenary_linen", "per_trestle"),
+    # White Fitted Cloths: per trestle
+    PackingItem("plenary_white_fitted", "White Fitted Cloths", "plenary_linen", "per_trestle"),
+    # Naked Trestles: manual (no linen)
+    PackingItem("plenary_naked_trestles", "Naked Trestles", "plenary_linen", "per_trestle",
                 default_notes="No linen required"),
 
     # === PLENARY PREP ===
-    PackingItem("plenary_mint_bowls", "Mint Bowls", "plenary_prep", "per_table"),
+    # Mint Bowls: =ROUNDUP(B3/4,0) for executive, or per trestle for standard plenary
+    PackingItem("plenary_mint_bowls", "Mint Bowls", "plenary_prep", "pax_div_4"),
+    # Pens: =SUM(B3) - per pax
     PackingItem("plenary_pens", "Pens", "plenary_prep", "per_pax"),
+    # A5 Pads: =SUM(B3) - per pax
     PackingItem("plenary_a5_pads", "A5 Pads", "plenary_prep", "per_pax"),
+    # Coasters: =SUM(B3) - per pax (executive uses 3x)
     PackingItem("plenary_coasters", "Coasters", "plenary_prep", "per_pax"),
+    # Water Glass: =SUM(B3) - per pax
     PackingItem("plenary_water_glass", "Water Glass", "plenary_prep", "per_pax"),
-    PackingItem("plenary_underliner", "Underliners", "plenary_prep", "per_table",
+    # Underliners: per trestle
+    PackingItem("plenary_underliner", "Underliners", "plenary_prep", "per_trestle",
                 default_notes="With white flatfold"),
-    PackingItem("plenary_water_jugs", "Silver Water Jugs", "plenary_prep", "per_table"),
+    # Silver Water Jugs: per trestle
+    PackingItem("plenary_water_jugs", "Silver Water Jugs", "plenary_prep", "per_trestle"),
 ]
 
 
