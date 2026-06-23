@@ -1140,8 +1140,8 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
     worksheet.write(row, 3, packing_list.location)
     row += 1
 
-    # Buffet-specific info
-    if packing_list.event_type == "buffet":
+    # Buffet-specific info (for single-meal buffets)
+    if packing_list.event_type == "buffet" and not packing_list.meal_sections:
         worksheet.write(row, 0, "BUFFET SETUPS:", header_fmt)
         worksheet.write(row, 1, packing_list.buffet_setups)
         worksheet.write(row, 2, f"Hot: {packing_list.hot_items}")
@@ -1150,35 +1150,130 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
 
     row += 1  # Empty row
 
-    # Items by category - use dynamic category order and labels
-    items_by_cat = get_items_by_category(packing_list)
-    category_order = get_category_order(packing_list.event_type)
-    category_labels = get_category_labels(packing_list.event_type)
+    # Check if this is a multi-meal buffet
+    if packing_list.meal_sections:
+        # === MULTI-MEAL BUFFET: Write each meal section ===
+        meal_section_fmt = workbook.add_format({"bold": True, "font_size": 14, "bg_color": "#4472C4", "font_color": "white"})
 
-    for category in category_order:
-        items = items_by_cat.get(category, [])
-        active_items = [i for i in items if i.final_qty > 0]
-
-        if not active_items:
-            continue
-
-        # Category header
-        category_label = category_labels.get(category, category.replace("_", " ").title())
-        worksheet.write(row, 0, category_label, section_fmt)
-        worksheet.write(row, 1, "QUANTITY", section_fmt)
-        worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
-        worksheet.write(row, 3, "NOTES", section_fmt)
-        row += 1
-
-        # Items
-        for item in active_items:
-            worksheet.write(row, 0, item.name, cell_fmt)
-            worksheet.write(row, 1, item.final_qty, qty_fmt)
-            worksheet.write(row, 2, "", cell_fmt)  # Packed column (empty for manual check)
-            worksheet.write(row, 3, item.notes, cell_fmt)
+        for section in packing_list.meal_sections:
+            # Section header (meal name)
+            worksheet.write(row, 0, section.name.upper(), meal_section_fmt)
+            worksheet.write(row, 1, "", meal_section_fmt)
+            worksheet.write(row, 2, "", meal_section_fmt)
+            worksheet.write(row, 3, "", meal_section_fmt)
             row += 1
 
-        row += 1  # Empty row between sections
+            # Section setup info
+            worksheet.write(row, 0, "Set Up", header_fmt)
+            worksheet.write(row, 1, "QUANTITY", header_fmt)
+            worksheet.write(row, 2, "PACKED (Y/N)", header_fmt)
+            worksheet.write(row, 3, "NOTES", header_fmt)
+            row += 1
+
+            worksheet.write(row, 0, "Buffet Setups", cell_fmt)
+            worksheet.write(row, 1, section.buffet_setups, qty_fmt)
+            worksheet.write(row, 2, "", cell_fmt)
+            worksheet.write(row, 3, "", cell_fmt)
+            row += 1
+
+            worksheet.write(row, 0, "Hot Menu Items", cell_fmt)
+            worksheet.write(row, 1, section.hot_items, qty_fmt)
+            worksheet.write(row, 2, "", cell_fmt)
+            worksheet.write(row, 3, "", cell_fmt)
+            row += 1
+
+            worksheet.write(row, 0, "Cold Menu Items", cell_fmt)
+            worksheet.write(row, 1, section.cold_items, qty_fmt)
+            worksheet.write(row, 2, "", cell_fmt)
+            worksheet.write(row, 3, "", cell_fmt)
+            row += 1
+
+            if section.dessert_items > 0:
+                worksheet.write(row, 0, "Dessert Items", cell_fmt)
+                worksheet.write(row, 1, section.dessert_items, qty_fmt)
+                worksheet.write(row, 2, "", cell_fmt)
+                worksheet.write(row, 3, "", cell_fmt)
+                row += 1
+
+            row += 1  # Empty row
+
+            # Section items header
+            worksheet.write(row, 0, f"{section.name}", section_fmt)
+            worksheet.write(row, 1, "QUANTITY", section_fmt)
+            worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
+            worksheet.write(row, 3, "NOTES", section_fmt)
+            row += 1
+
+            # Section items
+            for item in section.items:
+                if item.final_qty > 0:
+                    worksheet.write(row, 0, item.name, cell_fmt)
+                    worksheet.write(row, 1, item.final_qty, qty_fmt)
+                    worksheet.write(row, 2, "", cell_fmt)
+                    worksheet.write(row, 3, item.notes, cell_fmt)
+                    row += 1
+
+            row += 1  # Empty row between sections
+
+        # === SHARED ITEMS (T&C Station, Water Station) ===
+        items_by_cat = get_items_by_category(packing_list)
+        category_labels = get_category_labels(packing_list.event_type)
+
+        for category in ["tc_station", "water_station"]:
+            items = items_by_cat.get(category, [])
+            active_items = [i for i in items if i.final_qty > 0]
+
+            if not active_items:
+                continue
+
+            # Category header
+            category_label = category_labels.get(category, category.replace("_", " ").title())
+            worksheet.write(row, 0, category_label, section_fmt)
+            worksheet.write(row, 1, "QUANTITY", section_fmt)
+            worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
+            worksheet.write(row, 3, "NOTES", section_fmt)
+            row += 1
+
+            # Items
+            for item in active_items:
+                worksheet.write(row, 0, item.name, cell_fmt)
+                worksheet.write(row, 1, item.final_qty, qty_fmt)
+                worksheet.write(row, 2, "", cell_fmt)
+                worksheet.write(row, 3, item.notes, cell_fmt)
+                row += 1
+
+            row += 1  # Empty row between sections
+
+    else:
+        # === SINGLE-MEAL OR OTHER EVENT TYPES ===
+        items_by_cat = get_items_by_category(packing_list)
+        category_order = get_category_order(packing_list.event_type)
+        category_labels = get_category_labels(packing_list.event_type)
+
+        for category in category_order:
+            items = items_by_cat.get(category, [])
+            active_items = [i for i in items if i.final_qty > 0]
+
+            if not active_items:
+                continue
+
+            # Category header
+            category_label = category_labels.get(category, category.replace("_", " ").title())
+            worksheet.write(row, 0, category_label, section_fmt)
+            worksheet.write(row, 1, "QUANTITY", section_fmt)
+            worksheet.write(row, 2, "PACKED (Y/N)", section_fmt)
+            worksheet.write(row, 3, "NOTES", section_fmt)
+            row += 1
+
+            # Items
+            for item in active_items:
+                worksheet.write(row, 0, item.name, cell_fmt)
+                worksheet.write(row, 1, item.final_qty, qty_fmt)
+                worksheet.write(row, 2, "", cell_fmt)
+                worksheet.write(row, 3, item.notes, cell_fmt)
+                row += 1
+
+            row += 1  # Empty row between sections
 
     # Sign-off section
     row += 1
