@@ -18,7 +18,8 @@ from recon.workflow import (
 from recon.packing import (
     generate_packing_list, get_items_by_category, save_packing_list,
     PackingList, EVENT_TYPES, BUFFET_SUB_TYPES, PLENARY_SUB_TYPES,
-    get_category_order, get_category_labels,
+    get_category_order, get_category_labels, MULTI_MEAL_CONFIGS,
+    BUFFET_CATEGORY_LABELS,
 )
 
 
@@ -650,59 +651,148 @@ def render_packing():
             key="packing_buffet_subtype"
         )
 
-        opt_col1, opt_col2, opt_col3 = st.columns(3)
+        # Check if this is a multi-meal buffet
+        is_multi_meal = sub_type in MULTI_MEAL_CONFIGS
+        meal_sections_input = []
 
-        with opt_col1:
-            st.markdown("**Buffet Setup**")
-            buffet_setups = st.number_input(
-                "Number of Buffet Setups",
-                min_value=1, max_value=10,
-                value=1,
-                step=1,
-                key="packing_buffet_setups"
-            )
-            hot_items = st.number_input(
-                "Hot Items",
-                min_value=0, max_value=20,
-                value=3,
-                step=1,
-                key="packing_hot_items"
-            )
-            cold_items = st.number_input(
-                "Cold Items",
-                min_value=0, max_value=20,
-                value=2,
-                step=1,
-                key="packing_cold_items"
-            )
+        if is_multi_meal:
+            # Multi-meal buffet: show setup inputs for each meal section
+            st.markdown("---")
+            st.markdown("**Setup per Meal**")
 
-        with opt_col2:
-            st.markdown("**Stations**")
-            tc_stations = st.number_input(
-                "Tea & Coffee Stations",
-                min_value=0, max_value=10,
-                value=1,
-                step=1,
-                key="packing_tc_stations"
-            )
-            water_stations = st.number_input(
-                "Water Stations",
-                min_value=0, max_value=10,
-                value=1,
-                step=1,
-                key="packing_water_stations"
-            )
-            has_tc = tc_stations > 0  # Auto-enable TC if stations > 0
+            meal_configs = MULTI_MEAL_CONFIGS[sub_type]
+            for i, meal_config in enumerate(meal_configs):
+                section_id = meal_config["section_id"]
+                section_name = meal_config["name"]
 
-        with opt_col3:
-            st.markdown("**Display Options**")
-            riser_color = st.radio(
-                "Riser Sets",
-                ["white", "black"],
-                horizontal=True,
-                format_func=lambda x: x.title(),
-                key="packing_riser_color"
-            )
+                with st.expander(f"**{section_name}**", expanded=True):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        section_buffet_setups = st.number_input(
+                            "Buffet Setups",
+                            min_value=1, max_value=10,
+                            value=1,
+                            step=1,
+                            key=f"packing_{section_id}_buffet_setups"
+                        )
+                    with col2:
+                        section_hot_items = st.number_input(
+                            "Hot Items",
+                            min_value=0, max_value=20,
+                            value=2 if section_id in ["lunch", "dinner", "breakfast"] else 0,
+                            step=1,
+                            key=f"packing_{section_id}_hot_items"
+                        )
+                    with col3:
+                        section_cold_items = st.number_input(
+                            "Cold Items",
+                            min_value=0, max_value=20,
+                            value=3,
+                            step=1,
+                            key=f"packing_{section_id}_cold_items"
+                        )
+                    with col4:
+                        section_dessert_items = st.number_input(
+                            "Dessert Items",
+                            min_value=0, max_value=10,
+                            value=2 if section_id in ["lunch", "dinner", "afternoon_tea"] else 0,
+                            step=1,
+                            key=f"packing_{section_id}_dessert_items"
+                        )
+
+                    meal_sections_input.append({
+                        "section_id": section_id,
+                        "name": section_name,
+                        "buffet_setups": section_buffet_setups,
+                        "hot_items": section_hot_items,
+                        "cold_items": section_cold_items,
+                        "dessert_items": section_dessert_items,
+                    })
+
+            st.markdown("---")
+            st.markdown("**Shared Stations**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                tc_stations = st.number_input(
+                    "Tea & Coffee Stations",
+                    min_value=0, max_value=10,
+                    value=1,
+                    step=1,
+                    key="packing_tc_stations"
+                )
+            with col2:
+                water_stations = st.number_input(
+                    "Water Stations",
+                    min_value=0, max_value=10,
+                    value=1,
+                    step=1,
+                    key="packing_water_stations"
+                )
+            with col3:
+                riser_color = st.radio(
+                    "Riser Sets",
+                    ["white", "black"],
+                    horizontal=True,
+                    format_func=lambda x: x.title(),
+                    key="packing_riser_color"
+                )
+            has_tc = tc_stations > 0
+
+        else:
+            # Single-meal buffet: original layout
+            opt_col1, opt_col2, opt_col3 = st.columns(3)
+
+            with opt_col1:
+                st.markdown("**Buffet Setup**")
+                buffet_setups = st.number_input(
+                    "Number of Buffet Setups",
+                    min_value=1, max_value=10,
+                    value=1,
+                    step=1,
+                    key="packing_buffet_setups"
+                )
+                hot_items = st.number_input(
+                    "Hot Items",
+                    min_value=0, max_value=20,
+                    value=3,
+                    step=1,
+                    key="packing_hot_items"
+                )
+                cold_items = st.number_input(
+                    "Cold Items",
+                    min_value=0, max_value=20,
+                    value=2,
+                    step=1,
+                    key="packing_cold_items"
+                )
+
+            with opt_col2:
+                st.markdown("**Stations**")
+                tc_stations = st.number_input(
+                    "Tea & Coffee Stations",
+                    min_value=0, max_value=10,
+                    value=1,
+                    step=1,
+                    key="packing_tc_stations"
+                )
+                water_stations = st.number_input(
+                    "Water Stations",
+                    min_value=0, max_value=10,
+                    value=1,
+                    step=1,
+                    key="packing_water_stations"
+                )
+                has_tc = tc_stations > 0  # Auto-enable TC if stations > 0
+
+            with opt_col3:
+                st.markdown("**Display Options**")
+                riser_color = st.radio(
+                    "Riser Sets",
+                    ["white", "black"],
+                    horizontal=True,
+                    format_func=lambda x: x.title(),
+                    key="packing_riser_color"
+                )
 
     # === PLENARY OPTIONS ===
     elif event_type == "plenary":
@@ -740,6 +830,11 @@ def render_packing():
 
     # ============ GENERATE BUTTON ============
     if st.button("📋 Generate Packing List", type="primary", use_container_width=True):
+        # For multi-meal buffets, use meal_sections_input; otherwise None
+        multi_meal_sections = None
+        if event_type == "buffet" and sub_type in MULTI_MEAL_CONFIGS:
+            multi_meal_sections = meal_sections_input if meal_sections_input else None
+
         packing_list = generate_packing_list(
             event_name=event_name,
             event_date=event_date,
@@ -763,6 +858,8 @@ def render_packing():
             tc_stations=tc_stations,
             water_stations=water_stations,
             riser_color=riser_color,
+            # Multi-meal buffet sections
+            meal_sections_input=multi_meal_sections,
             # Plenary options
             trestle_count=trestle_count,
             linen_style=linen_style,
@@ -784,7 +881,12 @@ def render_packing():
             summary_line2 = f"**{packing_list.pax} pax** | **{packing_list.tables} tables** | {packing_list.courses} course | Napkins: {packing_list.napkin_color.title()}, Underliners: {packing_list.underliner_color.title()}, Rounds: {packing_list.round_color.title()}"
         elif packing_list.event_type == "buffet":
             sub_label = BUFFET_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
-            summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {packing_list.buffet_setups} setup(s) | Hot: {packing_list.hot_items}, Cold: {packing_list.cold_items}"
+            if packing_list.meal_sections:
+                # Multi-meal buffet
+                section_names = ", ".join([s.name for s in packing_list.meal_sections])
+                summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {len(packing_list.meal_sections)} meals"
+            else:
+                summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {packing_list.buffet_setups} setup(s) | Hot: {packing_list.hot_items}, Cold: {packing_list.cold_items}"
         elif packing_list.event_type == "plenary":
             sub_label = PLENARY_SUB_TYPES.get(packing_list.sub_type, packing_list.sub_type)
             summary_line2 = f"**{packing_list.pax} pax** | {sub_label} | {packing_list.trestle_count} trestles"
@@ -798,59 +900,153 @@ def render_packing():
 
         st.divider()
 
-        # Items by category - use dynamic category order and labels
-        items_by_cat = get_items_by_category(packing_list)
-        category_order = get_category_order(packing_list.event_type)
-        category_labels = get_category_labels(packing_list.event_type)
+        # Check if this is a multi-meal buffet
+        if packing_list.meal_sections:
+            # === MULTI-MEAL BUFFET: Display each meal section ===
+            for section_idx, section in enumerate(packing_list.meal_sections):
+                st.markdown(f"### {section.name}")
+                st.caption(f"Setups: {section.buffet_setups} | Hot: {section.hot_items} | Cold: {section.cold_items} | Dessert: {section.dessert_items}")
 
-        # Optional categories to skip when empty
-        optional_categories = ["bar_foh", "tc", "canape", "tc_station", "water_station"]
+                # Group items by category within this section
+                section_items_by_cat = {}
+                for item in section.items:
+                    if item.category not in section_items_by_cat:
+                        section_items_by_cat[item.category] = []
+                    section_items_by_cat[item.category].append(item)
 
-        for category in category_order:
-            items = items_by_cat.get(category, [])
-            # Only show categories with items that have qty > 0 or are always shown
-            active_items = [i for i in items if i.final_qty > 0]
+                for category in ["buffet_setup", "buffet_napkins"]:
+                    items = section_items_by_cat.get(category, [])
+                    active_items = [i for i in items if i.final_qty > 0]
 
-            if not active_items and category in optional_categories:
-                continue  # Skip empty optional categories
-
-            category_label = category_labels.get(category, category.replace("_", " ").title())
-            with st.expander(f"**{category_label}** ({len(active_items)} items)", expanded=True):
-                if not items:
-                    st.caption("No items in this category")
-                    continue
-
-                # Create editable table
-                for i, item in enumerate(items):
-                    if item.final_qty == 0 and category in ["linen", "plenary_linen", "buffet_napkins"]:
-                        # Skip zero-qty linen (wrong color/style)
+                    if not active_items:
                         continue
 
-                    col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
+                    category_label = BUFFET_CATEGORY_LABELS.get(category, category.replace("_", " ").title())
+                    with st.expander(f"**{category_label}** ({len(active_items)} items)", expanded=True):
+                        for i, item in enumerate(items):
+                            if item.final_qty == 0 and category == "buffet_napkins":
+                                continue
 
-                    with col1:
-                        st.markdown(f"**{item.name}**")
+                            col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
 
-                    with col2:
-                        st.caption(f"Suggested: {item.suggested_qty}")
+                            with col1:
+                                st.markdown(f"**{item.name}**")
 
-                    with col3:
-                        # Editable quantity
-                        new_qty = st.number_input(
-                            "Qty",
-                            min_value=0,
-                            value=item.final_qty,
-                            step=1,
-                            key=f"qty_{category}_{i}",
-                            label_visibility="collapsed"
-                        )
-                        # Update if changed
-                        if new_qty != item.final_qty:
-                            item.final_qty = new_qty
+                            with col2:
+                                st.caption(f"Suggested: {item.suggested_qty}")
 
-                    with col4:
-                        if item.notes:
-                            st.caption(item.notes)
+                            with col3:
+                                new_qty = st.number_input(
+                                    "Qty",
+                                    min_value=0,
+                                    value=item.final_qty,
+                                    step=1,
+                                    key=f"qty_section_{section_idx}_{category}_{i}",
+                                    label_visibility="collapsed"
+                                )
+                                if new_qty != item.final_qty:
+                                    item.final_qty = new_qty
+
+                            with col4:
+                                if item.notes:
+                                    st.caption(item.notes)
+
+                st.divider()
+
+            # === SHARED ITEMS (T&C Station, Water Station) ===
+            st.markdown("### Shared Stations")
+
+            items_by_cat = get_items_by_category(packing_list)
+            category_labels = get_category_labels(packing_list.event_type)
+
+            for category in ["tc_station", "water_station"]:
+                items = items_by_cat.get(category, [])
+                active_items = [i for i in items if i.final_qty > 0]
+
+                if not active_items:
+                    continue
+
+                category_label = category_labels.get(category, category.replace("_", " ").title())
+                with st.expander(f"**{category_label}** ({len(active_items)} items)", expanded=True):
+                    for i, item in enumerate(items):
+                        col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
+
+                        with col1:
+                            st.markdown(f"**{item.name}**")
+
+                        with col2:
+                            st.caption(f"Suggested: {item.suggested_qty}")
+
+                        with col3:
+                            new_qty = st.number_input(
+                                "Qty",
+                                min_value=0,
+                                value=item.final_qty,
+                                step=1,
+                                key=f"qty_shared_{category}_{i}",
+                                label_visibility="collapsed"
+                            )
+                            if new_qty != item.final_qty:
+                                item.final_qty = new_qty
+
+                        with col4:
+                            if item.notes:
+                                st.caption(item.notes)
+
+        else:
+            # === SINGLE-MEAL OR OTHER EVENT TYPES ===
+            items_by_cat = get_items_by_category(packing_list)
+            category_order = get_category_order(packing_list.event_type)
+            category_labels = get_category_labels(packing_list.event_type)
+
+            # Optional categories to skip when empty
+            optional_categories = ["bar_foh", "tc", "canape", "tc_station", "water_station"]
+
+            for category in category_order:
+                items = items_by_cat.get(category, [])
+                # Only show categories with items that have qty > 0 or are always shown
+                active_items = [i for i in items if i.final_qty > 0]
+
+                if not active_items and category in optional_categories:
+                    continue  # Skip empty optional categories
+
+                category_label = category_labels.get(category, category.replace("_", " ").title())
+                with st.expander(f"**{category_label}** ({len(active_items)} items)", expanded=True):
+                    if not items:
+                        st.caption("No items in this category")
+                        continue
+
+                    # Create editable table
+                    for i, item in enumerate(items):
+                        if item.final_qty == 0 and category in ["linen", "plenary_linen", "buffet_napkins"]:
+                            # Skip zero-qty linen (wrong color/style)
+                            continue
+
+                        col1, col2, col3, col4 = st.columns([3, 1, 1, 2])
+
+                        with col1:
+                            st.markdown(f"**{item.name}**")
+
+                        with col2:
+                            st.caption(f"Suggested: {item.suggested_qty}")
+
+                        with col3:
+                            # Editable quantity
+                            new_qty = st.number_input(
+                                "Qty",
+                                min_value=0,
+                                value=item.final_qty,
+                                step=1,
+                                key=f"qty_{category}_{i}",
+                                label_visibility="collapsed"
+                            )
+                            # Update if changed
+                            if new_qty != item.final_qty:
+                                item.final_qty = new_qty
+
+                        with col4:
+                            if item.notes:
+                                st.caption(item.notes)
 
         st.divider()
 

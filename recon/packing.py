@@ -133,6 +133,49 @@ class PackingListItem:
 
 
 @dataclass
+class MealSection:
+    """A meal section within a multi-meal buffet (e.g., Morning Tea, Lunch, Afternoon Tea)."""
+    name: str  # e.g., "Morning Tea Buffet", "Lunch Buffet"
+    section_id: str  # e.g., "morning_tea", "lunch", "afternoon_tea"
+    buffet_setups: int = 1
+    hot_items: int = 0
+    cold_items: int = 0
+    dessert_items: int = 0
+    items: List[PackingListItem] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "MealSection":
+        items = [PackingListItem(**item) for item in data.pop("items", [])]
+        return cls(**data, items=items)
+
+
+# Define which sub-types have multiple meal sections
+MULTI_MEAL_CONFIGS = {
+    "mt_lunch_at": [
+        {"section_id": "morning_tea", "name": "Morning Tea Buffet"},
+        {"section_id": "lunch", "name": "Lunch Buffet"},
+        {"section_id": "afternoon_tea", "name": "Afternoon Tea Buffet"},
+    ],
+    "morning_tea_lunch": [
+        {"section_id": "morning_tea", "name": "Morning Tea Buffet"},
+        {"section_id": "lunch", "name": "Lunch Buffet"},
+    ],
+    "lunch_afternoon_tea": [
+        {"section_id": "lunch", "name": "Lunch Buffet"},
+        {"section_id": "afternoon_tea", "name": "Afternoon Tea Buffet"},
+    ],
+    "breakfast_mt_lunch": [
+        {"section_id": "breakfast", "name": "Breakfast Buffet"},
+        {"section_id": "morning_tea", "name": "Morning Tea Buffet"},
+        {"section_id": "lunch", "name": "Lunch Buffet"},
+    ],
+}
+
+
+@dataclass
 class PackingList:
     """A complete packing list for an event."""
     id: str
@@ -173,8 +216,11 @@ class PackingList:
     # Plenary-specific options
     trestle_count: int = 0
 
-    # Items
+    # Items (for single-meal events or shared items like T&C/Water stations)
     items: List[PackingListItem] = field(default_factory=list)
+
+    # Meal sections (for multi-meal buffets like MT+Lunch+AT)
+    meal_sections: List[MealSection] = field(default_factory=list)
 
     # Metadata
     created_at: str = ""
@@ -184,6 +230,8 @@ class PackingList:
         result = asdict(self)
         if self.event_date:
             result["event_date"] = self.event_date.isoformat()
+        # Convert meal_sections
+        result["meal_sections"] = [ms.to_dict() for ms in self.meal_sections]
         return result
 
     @classmethod
@@ -191,7 +239,8 @@ class PackingList:
         if data.get("event_date"):
             data["event_date"] = date.fromisoformat(data["event_date"])
         items = [PackingListItem(**item) for item in data.pop("items", [])]
-        return cls(**data, items=items)
+        meal_sections = [MealSection.from_dict(ms) for ms in data.pop("meal_sections", [])]
+        return cls(**data, items=items, meal_sections=meal_sections)
 
 
 # ============ EVENT TYPE DEFINITIONS ============
@@ -511,7 +560,7 @@ PLATED_CATEGORY_LABELS = {
     "canape": "Canapé Service",
 }
 
-# Buffet categories
+# Buffet categories (for single-meal buffets)
 BUFFET_CATEGORY_ORDER = ["buffet_setup", "buffet_napkins", "tc_station", "water_station"]
 BUFFET_CATEGORY_LABELS = {
     "buffet_setup": "Buffet Setup",
@@ -519,6 +568,11 @@ BUFFET_CATEGORY_LABELS = {
     "tc_station": "Tea & Coffee Station",
     "water_station": "Water Station",
 }
+
+# Categories for meal sections (per-meal items)
+MEAL_SECTION_CATEGORIES = ["buffet_setup", "buffet_napkins"]
+# Categories for shared items (T&C, Water - at end of packing list)
+SHARED_CATEGORIES = ["tc_station", "water_station"]
 
 # Plenary categories
 PLENARY_CATEGORY_ORDER = ["plenary_linen", "plenary_prep"]
@@ -586,26 +640,24 @@ def generate_packing_list(
     tc_stations: int = 1,
     water_stations: int = 1,
     riser_color: str = "white",
+    # Multi-meal buffet sections (list of dicts with section_id, name, buffet_setups, hot_items, cold_items, dessert_items)
+    meal_sections_input: Optional[List[Dict[str, Any]]] = None,
     # Plenary options
     trestle_count: int = 0,
     linen_style: str = "black_fitted",  # "black_fitted", "white_fitted", "naked"
 ) -> PackingList:
-    """Generate a packing list with calculated quantities."""
+    """Generate a packing list with calculated quantities.
+
+    For multi-meal buffets (e.g., MT + Lunch + AT), pass meal_sections_input with
+    setup values for each meal. Shared items (T&C, Water stations) go in the main items list.
+    """
 
     # Build options dict for condition checking
     has_entree = courses >= 2 if event_type == "plated" else False
-    has_dessert = courses >= 2 if event_type == "plated" else (sub_type in ["lunch", "dinner", "lunch_at", "full_day"])
+    has_dessert = courses >= 2 if event_type == "plated" else (sub_type in ["buffet_lunch", "buffet_dinner", "lunch_afternoon_tea", "mt_lunch_at"])
 
-    options = {
-        "has_entree": has_entree,
-        "has_dessert": has_dessert,
-        "has_tc": has_tc or tc_stations > 0,
-        "has_foh_bar": has_foh_bar,
-        "has_canapes": has_canapes,
-        "buffet_setups": buffet_setups,
-        "hot_items": hot_items,
-        "cold_items": cold_items,
-    }
+    # Check if this is a multi-meal buffet
+    is_multi_meal = event_type == "buffet" and sub_type in MULTI_MEAL_CONFIGS
 
     # Get items for this event type
     source_items = get_items_for_event_type(event_type)
@@ -613,72 +665,184 @@ def generate_packing_list(
     # Use trestle_count as tables for plenary
     effective_tables = trestle_count if event_type == "plenary" else tables
 
-    # Use tc_stations for plenary/buffet
-    effective_stations = tc_stations
-
-    # Generate items
     items = []
-    for item in source_items:
-        qty = item.calculate_qty(pax, effective_tables, effective_stations, options)
+    meal_sections = []
 
-        # === PLATED-SPECIFIC LOGIC ===
-        if event_type == "plated":
-            # Special case: Entrée fork needs 2x for 3-course (entrée + dessert)
-            if item.id == "entree_fork" and courses == 3:
-                qty = pax * 2
+    if is_multi_meal and meal_sections_input:
+        # === MULTI-MEAL BUFFET ===
+        # Generate items for each meal section
+        for section_input in meal_sections_input:
+            section_id = section_input.get("section_id", "")
+            section_name = section_input.get("name", section_id.replace("_", " ").title())
+            section_buffet_setups = section_input.get("buffet_setups", 1)
+            section_hot_items = section_input.get("hot_items", 0)
+            section_cold_items = section_input.get("cold_items", 0)
+            section_dessert_items = section_input.get("dessert_items", 0)
 
-            # Handle color selection for napkins, underliners, and rounds
-            if item.id == "black_napkins" and napkin_color != "black":
-                qty = 0
-            elif item.id == "white_napkins" and napkin_color != "white":
-                qty = 0
-            elif item.id == "black_underliner" and underliner_color != "black":
-                qty = 0
-            elif item.id == "white_underliner" and underliner_color != "white":
-                qty = 0
-            elif item.id == "black_rounds" and round_color != "black":
-                qty = 0
-            elif item.id == "white_rounds" and round_color != "white":
-                qty = 0
+            # Build section-specific options
+            section_options = {
+                "has_entree": True,
+                "has_dessert": section_id in ["lunch", "afternoon_tea", "dinner"] or section_dessert_items > 0,
+                "has_tc": tc_stations > 0,
+                "buffet_setups": section_buffet_setups,
+                "hot_items": section_hot_items,
+                "cold_items": section_cold_items + section_dessert_items,
+                "tc_stations": tc_stations,
+                "water_stations": water_stations,
+                "trestle_count": 0,
+            }
 
-        # === BUFFET-SPECIFIC LOGIC ===
-        elif event_type == "buffet":
-            # Handle riser color
-            if item.id == "white_riser_sets" and riser_color != "white":
-                qty = 0
-            elif item.id == "black_riser_sets" and riser_color != "black":
-                qty = 0
+            section_items = []
+            for item in source_items:
+                # Only include meal-section categories (buffet_setup, buffet_napkins)
+                if item.category not in MEAL_SECTION_CATEGORIES:
+                    continue
 
-            # Napkin selection based on sub_type (dinner uses black, others use white)
-            is_dinner = sub_type in ["dinner"]
-            if item.id == "white_cocktail_napkins" and is_dinner:
-                qty = 0
-            elif item.id == "black_cocktail_napkins" and not is_dinner:
-                qty = 0
-            elif item.id == "white_dinner_napkins" and is_dinner:
-                qty = 0
-            elif item.id == "black_dinner_napkins" and not is_dinner:
-                qty = 0
+                qty = item.calculate_qty(pax, effective_tables, tc_stations, section_options)
 
-        # === PLENARY-SPECIFIC LOGIC ===
-        elif event_type == "plenary":
-            # Handle linen style
-            if item.id == "plenary_black_fitted" and linen_style != "black_fitted":
-                qty = 0
-            elif item.id == "plenary_white_fitted" and linen_style != "white_fitted":
-                qty = 0
-            elif item.id == "plenary_naked_trestles" and linen_style != "naked":
-                qty = 0
+                # Handle riser color
+                if item.id == "white_riser_sets" and riser_color != "white":
+                    qty = 0
+                elif item.id == "black_riser_sets" and riser_color != "black":
+                    qty = 0
 
-        items.append(PackingListItem(
-            item_id=item.id,
-            name=item.name,
-            category=item.category,
-            suggested_qty=qty,
-            final_qty=qty,
-            packed=False,
-            notes=item.default_notes,
-        ))
+                # Napkin selection (dinner uses black, others use white)
+                is_dinner_section = section_id == "dinner"
+                if item.id == "white_cocktail_napkins" and is_dinner_section:
+                    qty = 0
+                elif item.id == "black_cocktail_napkins" and not is_dinner_section:
+                    qty = 0
+                elif item.id == "white_dinner_napkins" and is_dinner_section:
+                    qty = 0
+                elif item.id == "black_dinner_napkins" and not is_dinner_section:
+                    qty = 0
+
+                section_items.append(PackingListItem(
+                    item_id=item.id,
+                    name=item.name,
+                    category=item.category,
+                    suggested_qty=qty,
+                    final_qty=qty,
+                    packed=False,
+                    notes=item.default_notes,
+                ))
+
+            meal_sections.append(MealSection(
+                name=section_name,
+                section_id=section_id,
+                buffet_setups=section_buffet_setups,
+                hot_items=section_hot_items,
+                cold_items=section_cold_items,
+                dessert_items=section_dessert_items,
+                items=section_items,
+            ))
+
+        # Generate shared items (T&C Station, Water Station)
+        shared_options = {
+            "has_entree": False,
+            "has_dessert": False,
+            "has_tc": tc_stations > 0,
+            "buffet_setups": buffet_setups,
+            "hot_items": 0,
+            "cold_items": 0,
+            "tc_stations": tc_stations,
+            "water_stations": water_stations,
+            "trestle_count": 0,
+        }
+
+        for item in source_items:
+            if item.category not in SHARED_CATEGORIES:
+                continue
+
+            qty = item.calculate_qty(pax, effective_tables, tc_stations, shared_options)
+
+            items.append(PackingListItem(
+                item_id=item.id,
+                name=item.name,
+                category=item.category,
+                suggested_qty=qty,
+                final_qty=qty,
+                packed=False,
+                notes=item.default_notes,
+            ))
+
+    else:
+        # === SINGLE-MEAL BUFFET OR OTHER EVENT TYPES ===
+        options = {
+            "has_entree": has_entree,
+            "has_dessert": has_dessert,
+            "has_tc": has_tc or tc_stations > 0,
+            "has_foh_bar": has_foh_bar,
+            "has_canapes": has_canapes,
+            "buffet_setups": buffet_setups,
+            "hot_items": hot_items,
+            "cold_items": cold_items,
+            "tc_stations": tc_stations,
+            "water_stations": water_stations,
+            "trestle_count": trestle_count,
+        }
+
+        for item in source_items:
+            qty = item.calculate_qty(pax, effective_tables, tc_stations, options)
+
+            # === PLATED-SPECIFIC LOGIC ===
+            if event_type == "plated":
+                # Special case: Entrée fork needs 2x for 3-course (entrée + dessert)
+                if item.id == "entree_fork" and courses == 3:
+                    qty = pax * 2
+
+                # Handle color selection for napkins, underliners, and rounds
+                if item.id == "black_napkins" and napkin_color != "black":
+                    qty = 0
+                elif item.id == "white_napkins" and napkin_color != "white":
+                    qty = 0
+                elif item.id == "black_underliner" and underliner_color != "black":
+                    qty = 0
+                elif item.id == "white_underliner" and underliner_color != "white":
+                    qty = 0
+                elif item.id == "black_rounds" and round_color != "black":
+                    qty = 0
+                elif item.id == "white_rounds" and round_color != "white":
+                    qty = 0
+
+            # === BUFFET-SPECIFIC LOGIC ===
+            elif event_type == "buffet":
+                # Handle riser color
+                if item.id == "white_riser_sets" and riser_color != "white":
+                    qty = 0
+                elif item.id == "black_riser_sets" and riser_color != "black":
+                    qty = 0
+
+                # Napkin selection based on sub_type (dinner uses black, others use white)
+                is_dinner = sub_type in ["buffet_dinner"]
+                if item.id == "white_cocktail_napkins" and is_dinner:
+                    qty = 0
+                elif item.id == "black_cocktail_napkins" and not is_dinner:
+                    qty = 0
+                elif item.id == "white_dinner_napkins" and is_dinner:
+                    qty = 0
+                elif item.id == "black_dinner_napkins" and not is_dinner:
+                    qty = 0
+
+            # === PLENARY-SPECIFIC LOGIC ===
+            elif event_type == "plenary":
+                # Handle linen style
+                if item.id == "plenary_black_fitted" and linen_style != "black_fitted":
+                    qty = 0
+                elif item.id == "plenary_white_fitted" and linen_style != "white_fitted":
+                    qty = 0
+                elif item.id == "plenary_naked_trestles" and linen_style != "naked":
+                    qty = 0
+
+            items.append(PackingListItem(
+                item_id=item.id,
+                name=item.name,
+                category=item.category,
+                suggested_qty=qty,
+                final_qty=qty,
+                packed=False,
+                notes=item.default_notes,
+            ))
 
     return PackingList(
         id=datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -705,6 +869,7 @@ def generate_packing_list(
         water_stations=water_stations,
         trestle_count=trestle_count,
         items=items,
+        meal_sections=meal_sections,
         created_at=datetime.now().isoformat(),
         status="draft",
     )
