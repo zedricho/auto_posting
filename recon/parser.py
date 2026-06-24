@@ -95,7 +95,11 @@ def _extract_column_text(page) -> str:
         # Also check for day/date headers which span width
         is_date_header = bool(re.search(r'(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)', line_text, re.IGNORECASE))
 
-        if spans_width and has_price and has_qty and (has_time_pattern or is_date_header):
+        # Check for package pricing table rows: contain "package" or "delegate" with price
+        # E.g., "$103 Half Day AM Delegate Package 25 $103.00"
+        is_package_row = bool(re.search(r'(package|delegate)', line_text, re.IGNORECASE))
+
+        if spans_width and has_price and has_qty and (has_time_pattern or is_date_header or is_package_row):
             full_width_lines.add(top)
 
     def reconstruct_text(word_list):
