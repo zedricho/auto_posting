@@ -1407,28 +1407,10 @@ def render_stocktake():
             with col_stat:
                 st.metric("Total Base Items", len(base_items))
             with col_upload:
-                with st.expander("Re-upload Base Data"):
-                    uploaded_base_new = st.file_uploader(
-                        "Upload corrected Excel",
-                        type=["xlsx"],
-                        key="base_reimport",
-                    )
-                    if uploaded_base_new is not None:
-                        if st.button("Update Base Data", type="primary"):
-                            with st.spinner("Importing..."):
-                                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-                                    tmp.write(uploaded_base_new.read())
-                                    tmp_path = tmp.name
-                                try:
-                                    imported = import_base_from_excel(tmp_path)
-                                    save_base_items(imported)
-                                    st.session_state.stocktake_base = imported
-                                    st.success(f"Updated {len(imported)} base items!")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Import failed: {e}")
-                                finally:
-                                    os.unlink(tmp_path)
+                if st.button("Clear & Re-import", type="secondary"):
+                    save_base_items([])
+                    st.session_state.stocktake_base = []
+                    st.rerun()
 
             # Search
             base_search = st.text_input("Search items", key="base_search", placeholder="Search by code or name...")
