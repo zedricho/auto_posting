@@ -24,15 +24,71 @@ from recon.packing import (
 from recon.stocktake import (
     import_from_excel as import_stocktake_excel,
     import_base_from_excel,
-    load_items as load_stocktake_items,
-    save_items as save_stocktake_items,
-    load_base_items, save_base_items, get_base_by_department,
-    load_sessions, save_session, get_session,
+    load_items as load_stocktake_items_local,
+    save_items as save_stocktake_items_local,
+    load_base_items as load_base_items_local,
+    save_base_items as save_base_items_local,
+    get_base_by_department,
+    load_sessions as load_sessions_local,
+    save_session as save_session_local,
+    get_session as get_session_local,
     create_session, export_to_excel as export_stocktake_excel,
     update_base_from_session,
     get_items_by_department, get_items_by_category as get_stock_by_category,
     StockItem, StocktakeSession, StocktakeCount, BaseItem, DEPARTMENTS,
 )
+
+# Try to import sheets storage
+try:
+    from recon.sheets_storage import (
+        is_sheets_enabled,
+        load_base_items_sheets, save_base_items_sheets,
+        load_sessions_sheets, save_session_sheets, get_session_sheets,
+    )
+    SHEETS_AVAILABLE = True
+except ImportError:
+    SHEETS_AVAILABLE = False
+    def is_sheets_enabled():
+        return False
+
+
+# Wrapper functions that use sheets when available
+def load_base_items():
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        return load_base_items_sheets()
+    return load_base_items_local()
+
+
+def save_base_items(items):
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        save_base_items_sheets(items)
+    save_base_items_local(items)
+
+
+def load_sessions():
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        return load_sessions_sheets()
+    return load_sessions_local()
+
+
+def save_session(session):
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        save_session_sheets(session)
+    save_session_local(session)
+
+
+def get_session(session_id):
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        return get_session_sheets(session_id)
+    return get_session_local(session_id)
+
+
+def load_stocktake_items():
+    return load_stocktake_items_local()
+
+
+def save_stocktake_items(items):
+    save_stocktake_items_local(items)
 
 
 def check_password() -> bool:
@@ -1305,6 +1361,12 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
 def render_stocktake():
     """Stocktake inventory management page."""
     st.title("📦 Stocktake")
+
+    # Sync status indicator
+    if SHEETS_AVAILABLE and is_sheets_enabled():
+        st.success("☁️ Cloud Sync Active - Changes sync across all devices")
+    else:
+        st.warning("💾 Local Storage - Data does not sync across devices")
 
     # Initialize session state
     if "stocktake_items" not in st.session_state:
