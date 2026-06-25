@@ -29,6 +29,7 @@ from recon.stocktake import (
     load_base_items, save_base_items, get_base_by_department,
     load_sessions, save_session, get_session,
     create_session, export_to_excel as export_stocktake_excel,
+    update_base_from_session,
     get_items_by_department, get_items_by_category as get_stock_by_category,
     StockItem, StocktakeSession, StocktakeCount, BaseItem, DEPARTMENTS,
 )
@@ -1476,7 +1477,7 @@ def render_stocktake():
         with col1:
             if active_sessions:
                 session_options = ["New Session"] + [
-                    f"{s.session_id} - {s.session_date} ({s.location})"
+                    f"{s.name or s.session_id} ({s.session_date})"
                     for s in active_sessions
                 ]
                 selected = st.selectbox("Session", session_options, key="session_select")
@@ -1484,15 +1485,22 @@ def render_stocktake():
                 if selected == "New Session":
                     st.session_state.stocktake_session = None
                 else:
-                    session_id = selected.split(" - ")[0]
-                    st.session_state.stocktake_session = get_session(session_id)
+                    # Find session by matching the display string
+                    for s in active_sessions:
+                        display = f"{s.name or s.session_id} ({s.session_date})"
+                        if selected == display:
+                            st.session_state.stocktake_session = get_session(s.session_id)
+                            break
             else:
                 st.info("No active sessions. Create a new one to start counting.")
 
         with col2:
             if st.button("+ New Session", use_container_width=True):
+                # Default name based on current month/year
+                default_name = datetime.now().strftime("%b-%y Stocktake")
                 new_session = create_session(
                     session_date=datetime.now().date(),
+                    name=default_name,
                     location="Both",
                 )
                 save_session(new_session)
@@ -1507,8 +1515,21 @@ def render_stocktake():
 
         st.divider()
 
-        # Session info
-        st.markdown(f"**Session:** {session.session_id} | **Date:** {session.session_date} | **Status:** {session.status}")
+        # Session info with editable name
+        col_name, col_info = st.columns([2, 2])
+        with col_name:
+            new_name = st.text_input(
+                "Session Name",
+                value=session.name or session.session_id,
+                key="session_name_input",
+            )
+            if new_name != session.name:
+                session.name = new_name
+                save_session(session)
+
+        with col_info:
+            st.caption(f"ID: {session.session_id}")
+            st.caption(f"Date: {session.session_date} | Status: {session.status}")
 
         # Department tabs
         dept_tabs = st.tabs([d[1] for d in DEPARTMENTS if d[0] in by_dept])
@@ -1539,6 +1560,20 @@ def render_stocktake():
                             continue
 
                     with st.expander(f"**{cat_name}** ({len(cat_items)} items)", expanded=not search):
+                        # Column headers
+                        h1, h2, h3, h4, h5 = st.columns([3, 1, 1, 1, 1])
+                        with h1:
+                            st.markdown("**Item**")
+                        with h2:
+                            st.markdown("**Warehouse**")
+                        with h3:
+                            st.markdown("**In-house**")
+                        with h4:
+                            st.markdown("**Total**")
+                        with h5:
+                            st.markdown("**Status**")
+                        st.divider()
+
                         for item in cat_items:
                             count = session.get_count(item.item_code)
                             stock_down = count.stock_down(item.par_level)
@@ -1565,7 +1600,7 @@ def render_stocktake():
 
                             with col3:
                                 new_onsite = st.number_input(
-                                    "Onsite",
+                                    "In-house",
                                     min_value=0,
                                     value=count.onsite,
                                     step=1,
@@ -1594,7 +1629,7 @@ def render_stocktake():
         st.divider()
 
         # Actions
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             if st.button("💾 Save Progress", use_container_width=True):
@@ -1607,14 +1642,22 @@ def render_stocktake():
                 st.download_button(
                     "📥 Download",
                     data=excel_bytes,
-                    file_name=f"stocktake_{session.session_id}_{session.session_date}.xlsx",
+                    file_name=f"stocktake_{session.name or session.session_id}_{session.session_date}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
         with col3:
+            if st.button("📌 Save as New Base", use_container_width=True):
+                # Update base with current session counts
+                updated_base = update_base_from_session(session, base_items)
+                save_base_items(updated_base)
+                st.session_state.stocktake_base = updated_base
+                st.success(f"Base updated with {session.name or session.session_id} counts!")
+
+        with col4:
             if st.button("✅ Complete Session", use_container_width=True):
                 session.status = "completed"
-                session.completed_by = "User"  # Could add user input
+                session.completed_by = "User"
                 save_session(session)
                 st.session_state.stocktake_session = None
                 st.success("Session completed!")
@@ -1624,29 +1667,41 @@ def render_stocktake():
     with tab3:
         st.markdown("### Session History")
 
+        # Show base data info first
+        if base_items:
+            with st.expander("📌 **Current Base** (Jan-26 Stocktake)", expanded=False):
+                st.write(f"**Items:** {len(base_items)}")
+                total_stock = sum(item.total for item in base_items)
+                st.write(f"**Total Stock:** {total_stock:,}")
+                st.caption("This is the reference data used for comparisons.")
+
         all_sessions = load_sessions()
         if not all_sessions:
-            st.info("No stocktake sessions yet.")
+            st.info("No stocktake sessions yet. Create one in Count Entry to get started.")
         else:
             for s in sorted(all_sessions, key=lambda x: x.session_date, reverse=True):
                 status_icon = "✅" if s.status == "completed" else "🔄"
-                with st.expander(f"{status_icon} {s.session_date} - {s.session_id}"):
+                display_name = s.name or s.session_id
+                with st.expander(f"{status_icon} **{display_name}** ({s.session_date})"):
+                    st.write(f"**Session ID:** {s.session_id}")
                     st.write(f"**Location:** {s.location}")
                     st.write(f"**Status:** {s.status}")
                     st.write(f"**Completed By:** {s.completed_by or 'N/A'}")
 
                     # Count summary
                     counted = sum(1 for c in s.counts.values() if c.total > 0)
+                    total_stock = sum(c.total for c in s.counts.values())
                     st.write(f"**Items Counted:** {counted}")
+                    st.write(f"**Total Stock:** {total_stock:,}")
 
-                    col1, col2 = st.columns(2)
+                    col1, col2, col3 = st.columns(3)
                     with col1:
                         if st.button("📊 Export", key=f"export_{s.session_id}"):
                             excel_bytes = export_stocktake_excel(items, s)
                             st.download_button(
                                 "📥 Download",
                                 data=excel_bytes,
-                                file_name=f"stocktake_{s.session_id}_{s.session_date}.xlsx",
+                                file_name=f"stocktake_{s.name or s.session_id}_{s.session_date}.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key=f"dl_{s.session_id}",
                             )
@@ -1654,6 +1709,13 @@ def render_stocktake():
                         if s.status == "completed" and st.button("🔄 Reopen", key=f"reopen_{s.session_id}"):
                             s.status = "in_progress"
                             save_session(s)
+                            st.rerun()
+                    with col3:
+                        if st.button("📌 Set as Base", key=f"setbase_{s.session_id}"):
+                            updated_base = update_base_from_session(s, base_items)
+                            save_base_items(updated_base)
+                            st.session_state.stocktake_base = updated_base
+                            st.success(f"Base updated from {display_name}!")
                             st.rerun()
 
     # ============ TAB 4: SETTINGS ============

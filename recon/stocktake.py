@@ -146,6 +146,7 @@ class StocktakeSession:
     """A stocktake session (one counting event)."""
     session_id: str
     session_date: date
+    name: str = ""  # Display name like "Jul-26 Stocktake"
     location: str = "Both"  # "Warehouse", "Onsite", or "Both"
     counts: Dict[str, StocktakeCount] = field(default_factory=dict)  # item_code -> count
     completed_by: str = ""
@@ -179,6 +180,7 @@ class StocktakeSession:
         return {
             "session_id": self.session_id,
             "session_date": self.session_date.isoformat(),
+            "name": self.name,
             "location": self.location,
             "counts": {k: v.to_dict() for k, v in self.counts.items()},
             "completed_by": self.completed_by,
@@ -197,6 +199,7 @@ class StocktakeSession:
         return cls(
             session_id=data["session_id"],
             session_date=date.fromisoformat(data["session_date"]),
+            name=data.get("name", ""),
             location=data.get("location", "Both"),
             counts=counts,
             completed_by=data.get("completed_by", ""),
@@ -348,13 +351,39 @@ def import_from_excel(file_path: str) -> List[StockItem]:
     return items
 
 
-def create_session(session_date: date, location: str = "Both") -> StocktakeSession:
+def create_session(session_date: date, name: str = "", location: str = "Both") -> StocktakeSession:
     """Create a new stocktake session."""
     return StocktakeSession(
         session_id=str(uuid.uuid4())[:8],
         session_date=session_date,
+        name=name,
         location=location,
     )
+
+
+def update_base_from_session(session: StocktakeSession, base_items: List[BaseItem]) -> List[BaseItem]:
+    """
+    Update base items with counts from a session.
+
+    Creates new BaseItem entries with the session's counts.
+    """
+    updated_base = []
+    for item in base_items:
+        count = session.counts.get(item.item_code)
+        if count:
+            # Update with new counts
+            updated_base.append(BaseItem(
+                item_code=item.item_code,
+                name=item.name,
+                department=item.department,
+                jan26_inhouse=count.onsite,  # onsite = in-house
+                warehouse=count.warehouse,
+                total=count.total,
+            ))
+        else:
+            # Keep existing
+            updated_base.append(item)
+    return updated_base
 
 
 def export_to_excel(items: List[StockItem], session: StocktakeSession) -> bytes:
