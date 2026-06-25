@@ -23,12 +23,14 @@ from recon.packing import (
 )
 from recon.stocktake import (
     import_from_excel as import_stocktake_excel,
+    import_base_from_excel,
     load_items as load_stocktake_items,
     save_items as save_stocktake_items,
+    load_base_items, save_base_items, get_base_by_department,
     load_sessions, save_session, get_session,
     create_session, export_to_excel as export_stocktake_excel,
     get_items_by_department, get_items_by_category as get_stock_by_category,
-    StockItem, StocktakeSession, StocktakeCount, DEPARTMENTS,
+    StockItem, StocktakeSession, StocktakeCount, BaseItem, DEPARTMENTS,
 )
 
 
@@ -1306,12 +1308,15 @@ def render_stocktake():
     # Initialize session state
     if "stocktake_items" not in st.session_state:
         st.session_state.stocktake_items = load_stocktake_items()
+    if "stocktake_base" not in st.session_state:
+        st.session_state.stocktake_base = load_base_items()
     if "stocktake_session" not in st.session_state:
         st.session_state.stocktake_session = None
     if "stocktake_dept" not in st.session_state:
         st.session_state.stocktake_dept = None
 
     items = st.session_state.stocktake_items
+    base_items = st.session_state.stocktake_base
 
     # ============ NO ITEMS: IMPORT SECTION ============
     if not items:
@@ -1360,10 +1365,91 @@ def render_stocktake():
     active_sessions = [s for s in sessions if s.status == "in_progress"]
 
     # Tabs for different modes
-    tab1, tab2, tab3 = st.tabs(["Count Entry", "History", "Settings"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Base", "Count Entry", "History", "Settings"])
 
-    # ============ TAB 1: COUNT ENTRY ============
+    # ============ TAB 1: BASE (Jan 26 Reference Data) ============
     with tab1:
+        st.markdown("### Base Inventory (Jan 26 Stocktake)")
+        st.caption("Reference data from the Jan 26 stocktake. This is read-only.")
+
+        if not base_items:
+            st.warning("No base data loaded. Import the Jan 26 stocktake results below.")
+
+            uploaded_base = st.file_uploader(
+                "Upload Jan 26 Stocktake Results Excel",
+                type=["xlsx"],
+                key="base_import",
+            )
+
+            if uploaded_base is not None:
+                if st.button("Import Base Data", type="primary"):
+                    with st.spinner("Importing base data..."):
+                        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                            tmp.write(uploaded_base.read())
+                            tmp_path = tmp.name
+
+                        try:
+                            imported = import_base_from_excel(tmp_path)
+                            save_base_items(imported)
+                            st.session_state.stocktake_base = imported
+                            st.success(f"Imported {len(imported)} base items!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Import failed: {e}")
+                        finally:
+                            os.unlink(tmp_path)
+        else:
+            # Show base items grouped by department
+            base_by_dept = get_base_by_department(base_items)
+
+            # Stats
+            st.metric("Total Base Items", len(base_items))
+
+            # Search
+            base_search = st.text_input("Search items", key="base_search", placeholder="Search by code or name...")
+
+            # Department tabs for base data
+            base_dept_list = [(d[0], d[1]) for d in DEPARTMENTS if d[0] in base_by_dept]
+            if base_dept_list:
+                base_dept_tabs = st.tabs([d[1] for d in base_dept_list])
+
+                for tab_idx, (dept_code, dept_name) in enumerate(base_dept_list):
+                    with base_dept_tabs[tab_idx]:
+                        dept_base_items = base_by_dept[dept_code]
+
+                        # Filter by search
+                        if base_search:
+                            dept_base_items = [
+                                i for i in dept_base_items
+                                if base_search.lower() in i.item_code.lower() or base_search.lower() in i.name.lower()
+                            ]
+
+                        if not dept_base_items:
+                            st.info("No items match your search.")
+                            continue
+
+                        # Display as table
+                        st.markdown(f"**{len(dept_base_items)} items**")
+
+                        # Create a compact table view
+                        for item in dept_base_items:
+                            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+
+                            with col1:
+                                st.markdown(f"**{item.name}**")
+                                st.caption(f"{item.item_code}")
+
+                            with col2:
+                                st.metric("In-house", item.jan26_inhouse, label_visibility="collapsed")
+
+                            with col3:
+                                st.metric("Warehouse", item.warehouse, label_visibility="collapsed")
+
+                            with col4:
+                                st.metric("Total", item.total, label_visibility="collapsed")
+
+    # ============ TAB 2: COUNT ENTRY ============
+    with tab2:
         # Session selector or create new
         col1, col2 = st.columns([3, 1])
 
@@ -1514,8 +1600,8 @@ def render_stocktake():
                 st.success("Session completed!")
                 st.rerun()
 
-    # ============ TAB 2: HISTORY ============
-    with tab2:
+    # ============ TAB 3: HISTORY ============
+    with tab3:
         st.markdown("### Session History")
 
         all_sessions = load_sessions()
@@ -1550,8 +1636,8 @@ def render_stocktake():
                             save_session(s)
                             st.rerun()
 
-    # ============ TAB 3: SETTINGS ============
-    with tab3:
+    # ============ TAB 4: SETTINGS ============
+    with tab4:
         st.markdown("### Settings")
 
         st.markdown("#### Re-import Items")

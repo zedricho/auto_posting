@@ -56,6 +56,61 @@ class StockItem:
 
 
 @dataclass
+class BaseItem:
+    """A base inventory item with Jan 26 counts (read-only reference data)."""
+    item_code: str           # TSB-FAB-A001
+    name: str                # "Bar Blade"
+    department: str          # "F&B"
+    jan26_inhouse: int       # Count from Jan 26 stocktake
+    warehouse: int           # Warehouse count
+    total: int               # Total count
+
+    def to_dict(self) -> dict:
+        return {
+            "item_code": self.item_code,
+            "name": self.name,
+            "department": self.department,
+            "jan26_inhouse": self.jan26_inhouse,
+            "warehouse": self.warehouse,
+            "total": self.total,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BaseItem":
+        return cls(
+            item_code=data["item_code"],
+            name=data["name"],
+            department=data["department"],
+            jan26_inhouse=data.get("jan26_inhouse", 0),
+            warehouse=data.get("warehouse", 0),
+            total=data.get("total", 0),
+        )
+
+
+# Department mapping from item code prefix
+DEPT_CODE_MAP = {
+    "FAB": "F&B",
+    "KIT": "CHEF",
+    "LOG": "LOGISTICS",
+    "STW": "STEWARDING",
+    "GST": "Glass Studio",
+    "GH": "Glass Studio",  # Alternative code for Glass items
+    "FFE": "F&E",
+}
+
+
+def get_department_from_code(item_code: str) -> str:
+    """Extract department from item code like TSB-FAB-A001."""
+    if not item_code or not item_code.startswith("TSB-"):
+        return "Unknown"
+    parts = item_code.split("-")
+    if len(parts) >= 2:
+        prefix = parts[1]
+        return DEPT_CODE_MAP.get(prefix, "Unknown")
+    return "Unknown"
+
+
+@dataclass
 class StocktakeCount:
     """A count for a single item in a session."""
     item_code: str
@@ -423,11 +478,91 @@ def export_to_excel(items: List[StockItem], session: StocktakeSession) -> bytes:
 DATA_DIR = "data"
 ITEMS_FILE = os.path.join(DATA_DIR, "stocktake_items.json")
 SESSIONS_FILE = os.path.join(DATA_DIR, "stocktake_sessions.json")
+BASE_FILE = os.path.join(DATA_DIR, "stocktake_base.json")
 
 
 def _ensure_data_dir():
     """Ensure the data directory exists."""
     os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def import_base_from_excel(file_path: str) -> List[BaseItem]:
+    """
+    Import base stocktake data from the Jan 26 results Excel.
+
+    Uses Sheet1 with columns:
+    - B: TSB INTERNAL ITEM CODE
+    - C: EVENTS NAME
+    - H: Jan-26 In house
+    - I: Warehouse
+    - J: Jan26 TOTAL
+    """
+    df = pd.read_excel(file_path, sheet_name="Sheet1", header=0)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    items = []
+    for _, row in df.iterrows():
+        item_code = str(row.get("TSB INTERNAL ITEM CODE", "")).strip()
+        if not item_code.startswith("TSB-"):
+            continue
+
+        name = str(row.get("EVENTS NAME", "")).strip()
+        if not name or name == "nan":
+            name = item_code
+
+        # Parse counts (handle NaN and floats)
+        def safe_int(val, default=0):
+            try:
+                if pd.isna(val):
+                    return default
+                return int(float(val))
+            except (ValueError, TypeError):
+                return default
+
+        jan26_inhouse = safe_int(row.get("Jan-26 In house", 0))
+        warehouse = safe_int(row.get("Warehouse", 0))
+        total = safe_int(row.get("Jan26 TOTAL", 0))
+
+        department = get_department_from_code(item_code)
+
+        items.append(BaseItem(
+            item_code=item_code,
+            name=name,
+            department=department,
+            jan26_inhouse=jan26_inhouse,
+            warehouse=warehouse,
+            total=total,
+        ))
+
+    return items
+
+
+def load_base_items() -> List[BaseItem]:
+    """Load base items from JSON storage."""
+    _ensure_data_dir()
+    if not os.path.exists(BASE_FILE):
+        return []
+    with open(BASE_FILE, "r") as f:
+        data = json.load(f)
+    return [BaseItem.from_dict(d) for d in data]
+
+
+def save_base_items(items: List[BaseItem]):
+    """Save base items to JSON storage."""
+    _ensure_data_dir()
+    data = [item.to_dict() for item in items]
+    with open(BASE_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_base_by_department(items: List[BaseItem]) -> Dict[str, List[BaseItem]]:
+    """Group base items by department."""
+    by_dept: Dict[str, List[BaseItem]] = {}
+    for item in items:
+        if item.department not in by_dept:
+            by_dept[item.department] = []
+        by_dept[item.department].append(item)
+    return by_dept
 
 
 def load_items() -> List[StockItem]:
