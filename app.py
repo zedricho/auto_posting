@@ -1402,8 +1402,33 @@ def render_stocktake():
             # Show base items grouped by department
             base_by_dept = get_base_by_department(base_items)
 
-            # Stats
-            st.metric("Total Base Items", len(base_items))
+            # Stats and re-upload option
+            col_stat, col_upload = st.columns([2, 1])
+            with col_stat:
+                st.metric("Total Base Items", len(base_items))
+            with col_upload:
+                with st.expander("Re-upload Base Data"):
+                    uploaded_base_new = st.file_uploader(
+                        "Upload corrected Excel",
+                        type=["xlsx"],
+                        key="base_reimport",
+                    )
+                    if uploaded_base_new is not None:
+                        if st.button("Update Base Data", type="primary"):
+                            with st.spinner("Importing..."):
+                                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                                    tmp.write(uploaded_base_new.read())
+                                    tmp_path = tmp.name
+                                try:
+                                    imported = import_base_from_excel(tmp_path)
+                                    save_base_items(imported)
+                                    st.session_state.stocktake_base = imported
+                                    st.success(f"Updated {len(imported)} base items!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Import failed: {e}")
+                                finally:
+                                    os.unlink(tmp_path)
 
             # Search
             base_search = st.text_input("Search items", key="base_search", placeholder="Search by code or name...")
@@ -1428,10 +1453,23 @@ def render_stocktake():
                             st.info("No items match your search.")
                             continue
 
-                        # Display as table
+                        # Display as table with headers
                         st.markdown(f"**{len(dept_base_items)} items**")
 
-                        # Create a compact table view
+                        # Column headers
+                        header_col1, header_col2, header_col3, header_col4 = st.columns([3, 1, 1, 1])
+                        with header_col1:
+                            st.markdown("**Item**")
+                        with header_col2:
+                            st.markdown("**In-house**")
+                        with header_col3:
+                            st.markdown("**Warehouse**")
+                        with header_col4:
+                            st.markdown("**Total Stock**")
+
+                        st.divider()
+
+                        # Item rows
                         for item in dept_base_items:
                             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
@@ -1440,13 +1478,13 @@ def render_stocktake():
                                 st.caption(f"{item.item_code}")
 
                             with col2:
-                                st.metric("In-house", item.jan26_inhouse, label_visibility="collapsed")
+                                st.markdown(f"{item.jan26_inhouse}")
 
                             with col3:
-                                st.metric("Warehouse", item.warehouse, label_visibility="collapsed")
+                                st.markdown(f"{item.warehouse}")
 
                             with col4:
-                                st.metric("Total", item.total, label_visibility="collapsed")
+                                st.markdown(f"**{item.total}**")
 
     # ============ TAB 2: COUNT ENTRY ============
     with tab2:
