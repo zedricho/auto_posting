@@ -21,6 +21,15 @@ from recon.packing import (
     get_category_order, get_category_labels, MULTI_MEAL_CONFIGS,
     BUFFET_CATEGORY_LABELS,
 )
+from recon.stocktake import (
+    import_from_excel as import_stocktake_excel,
+    load_items as load_stocktake_items,
+    save_items as save_stocktake_items,
+    load_sessions, save_session, get_session,
+    create_session, export_to_excel as export_stocktake_excel,
+    get_items_by_department, get_items_by_category as get_stock_by_category,
+    StockItem, StocktakeSession, StocktakeCount, DEPARTMENTS,
+)
 
 
 def check_password() -> bool:
@@ -56,7 +65,7 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.radio(
         "Select Page",
-        ["Overview", "Packing Lists", "Reconciliation"],
+        ["Overview", "Packing Lists", "Stocktake", "Reconciliation"],
         label_visibility="collapsed",
     )
 
@@ -64,6 +73,8 @@ def main():
         render_overview()
     elif page == "Packing Lists":
         render_packing()
+    elif page == "Stocktake":
+        render_stocktake()
     else:
         render_reconciliation()
 
@@ -1286,6 +1297,300 @@ def generate_packing_excel(packing_list: PackingList) -> bytes:
     workbook.close()
     output.seek(0)
     return output.getvalue()
+
+
+def render_stocktake():
+    """Stocktake inventory management page."""
+    st.title("📦 Stocktake")
+
+    # Initialize session state
+    if "stocktake_items" not in st.session_state:
+        st.session_state.stocktake_items = load_stocktake_items()
+    if "stocktake_session" not in st.session_state:
+        st.session_state.stocktake_session = None
+    if "stocktake_dept" not in st.session_state:
+        st.session_state.stocktake_dept = None
+
+    items = st.session_state.stocktake_items
+
+    # ============ NO ITEMS: IMPORT SECTION ============
+    if not items:
+        st.info("No inventory items loaded. Import from Excel to get started.")
+
+        st.markdown("### Import Master Stocktake")
+
+        uploaded_file = st.file_uploader(
+            "Upload Stocktake Master Excel",
+            type=["xlsx"],
+            key="stocktake_import",
+        )
+
+        if uploaded_file is not None:
+            if st.button("Import Items", type="primary"):
+                with st.spinner("Importing..."):
+                    # Save to temp file
+                    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+
+                    try:
+                        imported = import_stocktake_excel(tmp_path)
+                        save_stocktake_items(imported)
+                        st.session_state.stocktake_items = imported
+                        st.success(f"Imported {len(imported)} items!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Import failed: {e}")
+                    finally:
+                        os.unlink(tmp_path)
+        return
+
+    # ============ ITEMS LOADED: MAIN UI ============
+
+    # Sidebar stats
+    by_dept = get_items_by_department(items)
+    st.sidebar.markdown("### Inventory Stats")
+    st.sidebar.metric("Total Items", len(items))
+    for dept_code, dept_name in DEPARTMENTS:
+        if dept_code in by_dept:
+            st.sidebar.caption(f"{dept_name}: {len(by_dept[dept_code])}")
+
+    # Session management
+    sessions = load_sessions()
+    active_sessions = [s for s in sessions if s.status == "in_progress"]
+
+    # Tabs for different modes
+    tab1, tab2, tab3 = st.tabs(["Count Entry", "History", "Settings"])
+
+    # ============ TAB 1: COUNT ENTRY ============
+    with tab1:
+        # Session selector or create new
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            if active_sessions:
+                session_options = ["New Session"] + [
+                    f"{s.session_id} - {s.session_date} ({s.location})"
+                    for s in active_sessions
+                ]
+                selected = st.selectbox("Session", session_options, key="session_select")
+
+                if selected == "New Session":
+                    st.session_state.stocktake_session = None
+                else:
+                    session_id = selected.split(" - ")[0]
+                    st.session_state.stocktake_session = get_session(session_id)
+            else:
+                st.info("No active sessions. Create a new one to start counting.")
+
+        with col2:
+            if st.button("+ New Session", use_container_width=True):
+                new_session = create_session(
+                    session_date=datetime.now().date(),
+                    location="Both",
+                )
+                save_session(new_session)
+                st.session_state.stocktake_session = new_session
+                st.rerun()
+
+        session = st.session_state.stocktake_session
+
+        if session is None:
+            st.warning("Select or create a session to begin counting.")
+            return
+
+        st.divider()
+
+        # Session info
+        st.markdown(f"**Session:** {session.session_id} | **Date:** {session.session_date} | **Status:** {session.status}")
+
+        # Department tabs
+        dept_tabs = st.tabs([d[1] for d in DEPARTMENTS if d[0] in by_dept])
+
+        for tab_idx, (dept_code, dept_name) in enumerate([(d[0], d[1]) for d in DEPARTMENTS if d[0] in by_dept]):
+            with dept_tabs[tab_idx]:
+                dept_items = by_dept[dept_code]
+
+                # Group by category
+                by_cat = get_stock_by_category(dept_items)
+                categories = by_cat.get(dept_code, {"Uncategorized": dept_items})
+
+                # Progress
+                counted = sum(1 for item in dept_items if session.get_count(item.item_code).total > 0)
+                st.progress(counted / len(dept_items) if dept_items else 0, text=f"{counted}/{len(dept_items)} items counted")
+
+                # Search
+                search = st.text_input("Search items", key=f"search_{dept_code}", placeholder="Search by code or name...")
+
+                for cat_name, cat_items in categories.items():
+                    # Filter by search
+                    if search:
+                        cat_items = [
+                            i for i in cat_items
+                            if search.lower() in i.item_code.lower() or search.lower() in i.name.lower()
+                        ]
+                        if not cat_items:
+                            continue
+
+                    with st.expander(f"**{cat_name}** ({len(cat_items)} items)", expanded=not search):
+                        for item in cat_items:
+                            count = session.get_count(item.item_code)
+                            stock_down = count.stock_down(item.par_level)
+
+                            col1, col2, col3, col4, col5 = st.columns([3, 1, 1, 1, 1])
+
+                            with col1:
+                                # Show alert if below par
+                                if stock_down > 0:
+                                    st.markdown(f"🔴 **{item.name}**")
+                                else:
+                                    st.markdown(f"**{item.name}**")
+                                st.caption(f"{item.item_code} | Par: {item.par_level}")
+
+                            with col2:
+                                new_warehouse = st.number_input(
+                                    "Warehouse",
+                                    min_value=0,
+                                    value=count.warehouse,
+                                    step=1,
+                                    key=f"wh_{item.item_code}",
+                                    label_visibility="collapsed",
+                                )
+
+                            with col3:
+                                new_onsite = st.number_input(
+                                    "Onsite",
+                                    min_value=0,
+                                    value=count.onsite,
+                                    step=1,
+                                    key=f"on_{item.item_code}",
+                                    label_visibility="collapsed",
+                                )
+
+                            with col4:
+                                total = new_warehouse + new_onsite
+                                st.metric("Total", total, label_visibility="collapsed")
+
+                            with col5:
+                                new_stock_down = item.par_level - total
+                                if new_stock_down > 0:
+                                    st.markdown(f"⚠️ **-{new_stock_down}**")
+                                elif new_stock_down < 0:
+                                    st.markdown(f"📈 +{abs(new_stock_down)}")
+                                else:
+                                    st.markdown("✅ OK")
+
+                            # Update if changed
+                            if new_warehouse != count.warehouse or new_onsite != count.onsite:
+                                session.set_count(item.item_code, new_warehouse, new_onsite)
+                                save_session(session)
+
+        st.divider()
+
+        # Actions
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("💾 Save Progress", use_container_width=True):
+                save_session(session)
+                st.success("Saved!")
+
+        with col2:
+            if st.button("📊 Export Excel", use_container_width=True):
+                excel_bytes = export_stocktake_excel(items, session)
+                st.download_button(
+                    "📥 Download",
+                    data=excel_bytes,
+                    file_name=f"stocktake_{session.session_id}_{session.session_date}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+        with col3:
+            if st.button("✅ Complete Session", use_container_width=True):
+                session.status = "completed"
+                session.completed_by = "User"  # Could add user input
+                save_session(session)
+                st.session_state.stocktake_session = None
+                st.success("Session completed!")
+                st.rerun()
+
+    # ============ TAB 2: HISTORY ============
+    with tab2:
+        st.markdown("### Session History")
+
+        all_sessions = load_sessions()
+        if not all_sessions:
+            st.info("No stocktake sessions yet.")
+        else:
+            for s in sorted(all_sessions, key=lambda x: x.session_date, reverse=True):
+                status_icon = "✅" if s.status == "completed" else "🔄"
+                with st.expander(f"{status_icon} {s.session_date} - {s.session_id}"):
+                    st.write(f"**Location:** {s.location}")
+                    st.write(f"**Status:** {s.status}")
+                    st.write(f"**Completed By:** {s.completed_by or 'N/A'}")
+
+                    # Count summary
+                    counted = sum(1 for c in s.counts.values() if c.total > 0)
+                    st.write(f"**Items Counted:** {counted}")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("📊 Export", key=f"export_{s.session_id}"):
+                            excel_bytes = export_stocktake_excel(items, s)
+                            st.download_button(
+                                "📥 Download",
+                                data=excel_bytes,
+                                file_name=f"stocktake_{s.session_id}_{s.session_date}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"dl_{s.session_id}",
+                            )
+                    with col2:
+                        if s.status == "completed" and st.button("🔄 Reopen", key=f"reopen_{s.session_id}"):
+                            s.status = "in_progress"
+                            save_session(s)
+                            st.rerun()
+
+    # ============ TAB 3: SETTINGS ============
+    with tab3:
+        st.markdown("### Settings")
+
+        st.markdown("#### Re-import Items")
+        st.warning("This will replace all existing items with data from a new Excel file.")
+
+        uploaded_file = st.file_uploader(
+            "Upload New Stocktake Master",
+            type=["xlsx"],
+            key="stocktake_reimport",
+        )
+
+        if uploaded_file is not None:
+            if st.button("Re-import Items", type="secondary"):
+                with st.spinner("Importing..."):
+                    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+                        tmp.write(uploaded_file.read())
+                        tmp_path = tmp.name
+
+                    try:
+                        imported = import_stocktake_excel(tmp_path)
+                        save_stocktake_items(imported)
+                        st.session_state.stocktake_items = imported
+                        st.success(f"Re-imported {len(imported)} items!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Import failed: {e}")
+                    finally:
+                        os.unlink(tmp_path)
+
+        st.divider()
+
+        st.markdown("#### Danger Zone")
+        if st.button("🗑️ Clear All Data", type="secondary"):
+            if st.checkbox("I understand this will delete all stocktake data"):
+                save_stocktake_items([])
+                st.session_state.stocktake_items = []
+                st.session_state.stocktake_session = None
+                st.success("All data cleared!")
+                st.rerun()
 
 
 def render_step_1_upload():
